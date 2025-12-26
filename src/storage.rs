@@ -34,6 +34,14 @@ pub fn get_run_path(result: &RunResult) -> Result<PathBuf> {
     Ok(runs_dir().join(format!("run-{safe_ts}-{}.json", result.meas_id)))
 }
 
+pub fn delete_run(result: &RunResult) -> Result<()> {
+    let path = get_run_path(result)?;
+    if path.exists() {
+        std::fs::remove_file(&path).context("delete run file")?;
+    }
+    Ok(())
+}
+
 pub fn export_json(path: &Path, result: &RunResult) -> Result<()> {
     let data = serde_json::to_vec_pretty(result)?;
     std::fs::write(path, data).context("write export json")?;

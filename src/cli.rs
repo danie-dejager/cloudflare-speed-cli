@@ -64,6 +64,10 @@ pub struct Cli {
     /// Export a one-line CSV summary to a file
     #[arg(long)]
     pub export_csv: Option<std::path::PathBuf>,
+
+    /// Automatically save test results (default: true)
+    #[arg(long, default_value_t = true)]
+    pub auto_save: bool,
 }
 
 pub async fn run(args: Cli) -> Result<()> {

@@ -64,11 +64,13 @@ struct UiState {
 
     last_result: Option<RunResult>,
     history: Vec<RunResult>,
+    history_selected: usize, // Index of selected history item (0 = most recent)
     ip: Option<String>,
     colo: Option<String>,
     server: Option<String>,
     asn: Option<String>,
     as_org: Option<String>,
+    auto_save: bool,
 }
 
 impl Default for UiState {
@@ -108,11 +110,13 @@ impl Default for UiState {
             loaded_ul_latency_received: 0,
             last_result: None,
             history: Vec::new(),
+            history_selected: 0,
             ip: None,
             colo: None,
             server: None,
             asn: None,
             as_org: None,
+            auto_save: true,
         }
     }
 }
@@ -197,6 +201,7 @@ pub async fn run(args: Cli) -> Result<()> {
 
     let mut state = UiState {
         phase: Phase::IdleLatency,
+        auto_save: args.auto_save,
         ..Default::default()
     };
     state.history = crate::storage::load_recent(20).unwrap_or_default();
@@ -270,11 +275,62 @@ pub async fn run(args: Cli) -> Result<()> {
                                 state.info = "No completed run to save yet.".into();
                             }
                         }
+                        (_, KeyCode::Char('a')) => {
+                            state.auto_save = !state.auto_save;
+                            state.info = if state.auto_save {
+                                "Auto-save enabled".into()
+                            } else {
+                                "Auto-save disabled".into()
+                            };
+                        }
                         (_, KeyCode::Tab) => {
-                            state.tab = (state.tab + 1) % 3;
+                            let new_tab = (state.tab + 1) % 3;
+                            state.tab = new_tab;
+                            // Reset history selection when switching to history tab
+                            if new_tab == 1 {
+                                state.history_selected = 0;
+                            }
                         }
                         (_, KeyCode::Char('?')) => {
                             state.tab = 2; // help
+                        }
+                        // History navigation and deletion (only when on History tab)
+                        (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                            if state.tab == 1 && !state.history.is_empty() {
+                                // Up/k goes to newer items (lower index, towards 0)
+                                if state.history_selected > 0 {
+                                    state.history_selected -= 1;
+                                }
+                            }
+                        }
+                        (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                            if state.tab == 1 && !state.history.is_empty() {
+                                // Down/j goes to older items (higher index in array)
+                                // Allow navigation through all items; display will show what fits
+                                if state.history_selected < state.history.len().saturating_sub(1) {
+                                    state.history_selected += 1;
+                                }
+                            }
+                        }
+                        (_, KeyCode::Char('d')) => {
+                            if state.tab == 1 && !state.history.is_empty() {
+                                // history_selected directly maps to history index (newest first)
+                                if state.history_selected < state.history.len() {
+                                    let to_delete = state.history[state.history_selected].clone();
+                                    if let Err(e) = crate::storage::delete_run(&to_delete) {
+                                        state.info = format!("Delete failed: {e:#}");
+                                    } else {
+                                        state.history.remove(state.history_selected);
+                                        // Adjust selection if needed
+                                        if state.history_selected >= state.history.len() && !state.history.is_empty() {
+                                            state.history_selected = state.history.len() - 1;
+                                        } else if state.history.is_empty() {
+                                            state.history_selected = 0;
+                                        }
+                                        state.info = "Deleted".into();
+                                    }
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -287,7 +343,9 @@ pub async fn run(args: Cli) -> Result<()> {
                         if let Some(h) = run_ctx.handle.take() {
                             match h.await {
                                 Ok(Ok(r)) => {
-                                    crate::storage::save_run(&r).ok();
+                                    if state.auto_save {
+                                        crate::storage::save_run(&r).ok();
+                                    }
                                     if let Some(meta) = r.meta.as_ref() {
                                         // Try multiple possible field names for IP
                                         state.ip = meta
@@ -611,7 +669,6 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         .block(Block::default().borders(Borders::ALL).title("Download Throughput (last 60s)"))
         .x_axis(
             Axis::default()
-                .title("s")
                 .bounds([(x_max - 60.0).max(0.0), x_max.max(1.0)]),
         )
         .y_axis(Axis::default().title("Mbps").bounds([0.0, y_dl_max]));
@@ -629,7 +686,6 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         .block(Block::default().borders(Borders::ALL).title("Upload Throughput (last 60s)"))
         .x_axis(
             Axis::default()
-                .title("s")
                 .bounds([(x_max - 60.0).max(0.0), x_max.max(1.0)]),
         )
         .y_axis(Axis::default().title("Mbps").bounds([0.0, y_ul_max]));
@@ -791,6 +847,11 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         ]),
         Line::from(vec![
             Span::raw("  "),
+            Span::styled("a", Style::default().fg(Color::Magenta)),
+            Span::raw("           Toggle auto-save"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
             Span::styled("tab", Style::default().fg(Color::Magenta)),
             Span::raw("         Switch tabs"),
         ]),
@@ -798,6 +859,17 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
             Span::raw("  "),
             Span::styled("?", Style::default().fg(Color::Magenta)),
             Span::raw("           Help"),
+        ]),
+        Line::from(vec![
+            Span::styled("Auto-save: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if state.auto_save { "ON" } else { "OFF" },
+                if state.auto_save {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::Red)
+                }
+            ),
         ]),
         Line::from(vec![
             Span::styled("Saved JSON: ", Style::default().fg(Color::Gray)),
@@ -920,12 +992,57 @@ fn draw_dashboard_compact(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
 fn draw_help(area: Rect, f: &mut ratatui::Frame) {
     let p = Paragraph::new(vec![
         Line::from("Keybinds:"),
-        Line::from("  q / Ctrl-C  Quit"),
-        Line::from("  r           Rerun"),
-        Line::from("  p           Pause/Resume"),
-        Line::from("  s           Save last run JSON"),
-        Line::from("  tab         Switch tabs"),
-        Line::from("  ?           Show this help"),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("q", Style::default().fg(Color::Magenta)),
+            Span::raw(" / "),
+            Span::styled("Ctrl-C", Style::default().fg(Color::Magenta)),
+            Span::raw("  Quit"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("r", Style::default().fg(Color::Magenta)),
+            Span::raw("           Rerun"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("p", Style::default().fg(Color::Magenta)),
+            Span::raw("           Pause/Resume"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("s", Style::default().fg(Color::Magenta)),
+            Span::raw("           Save last run JSON"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("a", Style::default().fg(Color::Magenta)),
+            Span::raw("           Toggle auto-save"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("tab", Style::default().fg(Color::Magenta)),
+            Span::raw("         Switch tabs"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("?", Style::default().fg(Color::Magenta)),
+            Span::raw("           Show this help"),
+        ]),
+        Line::from(""),
+        Line::from("History tab:"),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("↑/↓", Style::default().fg(Color::Magenta)),
+            Span::raw(" or "),
+            Span::styled("j/k", Style::default().fg(Color::Magenta)),
+            Span::raw("  Navigate"),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled("d", Style::default().fg(Color::Magenta)),
+            Span::raw("           Delete selected"),
+        ]),
         Line::from(""),
     ])
     .block(Block::default().borders(Borders::ALL).title("Help"));
@@ -938,39 +1055,116 @@ fn save_result_json(r: &RunResult) -> Result<std::path::PathBuf> {
 
 fn draw_history(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
     let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from("Most recent runs:"));
+    lines.push(Line::from("Most recent runs (↑/↓/j/k: navigate, d: delete):"));
     lines.push(Line::from(""));
-    for r in state.history.iter().take(10).rev() {
-        // Parse and format timestamp to human-readable format (yyyy-mm-dd hh:mm:ss)
-        // Try parsing RFC3339 format (e.g., "2024-12-19T17:30:45Z")
+    
+    // Calculate how many items can fit in the available area
+    // Subtract 2 for header lines, and 1 more for the "No history" message if needed
+    let max_items = (area.height as usize).saturating_sub(2);
+    
+    // History is already ordered newest first, so we display it directly
+    let history_display: Vec<_> = state.history.iter().take(max_items).collect();
+    for (i, r) in history_display.iter().enumerate() {
+        // i directly maps to history index since we're not reversing
+        let is_selected = state.tab == 1 && i == state.history_selected;
+        
+        // Parse and format timestamp to human-readable format in local timezone
         let timestamp_str: String = {
-            // Simple manual parsing for RFC3339 format
             let s = &r.timestamp_utc;
+            // Parse RFC3339 format manually and convert to local time
+            // Format: "2024-01-15T14:30:45Z" or "2024-01-15T14:30:45+00:00"
             if s.len() >= 19 && s.contains('T') {
-                // Extract "2024-12-19T17:30:45" part
                 let date_time: String = s.chars().take(19).collect();
                 if let Some(t_pos) = date_time.find('T') {
                     let date_part = &date_time[..t_pos];
                     let time_part = &date_time[t_pos+1..];
-                    format!("{} {}", date_part, time_part)
+                    
+                    // Parse date components
+                    if let (Some(year), Some(month), Some(day)) = (
+                        date_part.get(0..4).and_then(|s| s.parse::<i32>().ok()),
+                        date_part.get(5..7).and_then(|s| s.parse::<u8>().ok()),
+                        date_part.get(8..10).and_then(|s| s.parse::<u8>().ok()),
+                    ) {
+                        // Parse time components
+                        if let (Some(hour), Some(minute), Some(second)) = (
+                            time_part.get(0..2).and_then(|s| s.parse::<u8>().ok()),
+                            time_part.get(3..5).and_then(|s| s.parse::<u8>().ok()),
+                            time_part.get(6..8).and_then(|s| s.parse::<u8>().ok()),
+                        ) {
+                            // Try to create UTC datetime and convert to local
+                            if let Ok(month_enum) = time::Month::try_from(month) {
+                                if let (Ok(date), Ok(time)) = (
+                                    time::Date::from_calendar_date(year, month_enum, day),
+                                    time::Time::from_hms(hour, minute, second),
+                                ) {
+                                    let utc_dt = time::PrimitiveDateTime::new(date, time).assume_utc();
+                                    
+                                    // Get local offset and convert
+                                    match time::UtcOffset::current_local_offset() {
+                                        Ok(local_offset) => {
+                                            let local_dt = utc_dt.to_offset(local_offset);
+                                            let local_date = local_dt.date();
+                                            let local_time = local_dt.time();
+                                            // Format offset as +HH:MM or -HH:MM
+                                            let offset_hours = local_offset.whole_hours();
+                                            let offset_minutes = local_offset.whole_minutes() % 60;
+                                            let offset_sign = if offset_hours >= 0 { '+' } else { '-' };
+                                            let offset_str = format!("{}{:02}:{:02}", offset_sign, offset_hours.abs(), offset_minutes.abs());
+                                            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}", 
+                                                local_date.year(), local_date.month() as u8, local_date.day(),
+                                                local_time.hour(), local_time.minute(), local_time.second(), offset_str)
+                                        }
+                                        Err(_) => {
+                                            // Fallback to UTC if local offset can't be determined
+                                            format!("{} {} UTC", date_part, time_part)
+                                        }
+                                    }
+                                } else {
+                                    format!("{} {} UTC", date_part, time_part)
+                                }
+                            } else {
+                                format!("{} {} UTC", date_part, time_part)
+                            }
+                        } else {
+                            format!("{} {} UTC", date_part, time_part)
+                        }
+                    } else {
+                        format!("{} {} UTC", date_part, time_part)
+                    }
                 } else {
-                    r.timestamp_utc.clone()
+                    format!("{} UTC", s)
                 }
             } else {
-                r.timestamp_utc.clone()
+                format!("{} UTC", s)
             }
         };
         
+        let style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        
+        // Line number (1-indexed, newest = 1)
+        let line_num = i + 1;
+        
         lines.push(Line::from(vec![
-            Span::styled(timestamp_str, Style::default().fg(Color::Gray)),
+            Span::styled(format!("{:>2}. ", line_num), if is_selected { style } else { Style::default().fg(Color::Gray) }),
+            Span::styled(if is_selected { "> " } else { "  " }, style),
+            Span::styled(timestamp_str, if is_selected { style } else { Style::default().fg(Color::Gray) }),
             Span::raw("  "),
-            Span::styled(format!("DL {:>7.2} Mbps", r.download.mbps), Style::default().fg(Color::Green)),
+            Span::styled(format!("DL {:>7.2} Mbps", r.download.mbps), if is_selected { style } else { Style::default().fg(Color::Green) }),
             Span::raw("  "),
-            Span::styled(format!("UL {:>7.2} Mbps", r.upload.mbps), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("UL {:>7.2} Mbps", r.upload.mbps), if is_selected { style } else { Style::default().fg(Color::Cyan) }),
             Span::raw("  "),
-            Span::raw(format!("Idle p50 {:>6.1} ms", r.idle_latency.p50_ms.unwrap_or(f64::NAN))),
+            Span::styled(format!("Idle p50 {:>6.1} ms", r.idle_latency.p50_ms.unwrap_or(f64::NAN)), if is_selected { style } else { Style::default() }),
         ]));
     }
+    
+    if state.history.is_empty() {
+        lines.push(Line::from("No history available."));
+    }
+    
     let p = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("History"));
     f.render_widget(p, area);
 }
