@@ -403,6 +403,36 @@ fn apply_event(state: &mut UiState, ev: TestEvent) {
                 .get("colo")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            
+            // Extract ASN and organization
+            state.asn = meta
+                .get("asn")
+                .and_then(|v| {
+                    if let Some(n) = v.as_i64() {
+                        Some(n.to_string())
+                    } else {
+                        v.as_str().map(|s| s.to_string())
+                    }
+                });
+            state.as_org = meta
+                .get("asOrganization")
+                .or_else(|| meta.get("asnOrg"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            
+            // Extract city for server location (if available, use it directly)
+            if let Some(city) = meta.get("city").and_then(|v| v.as_str()) {
+                // If we have city, use it for server location
+                // Could combine with country if available
+                if let Some(country) = meta.get("country").and_then(|v| v.as_str()) {
+                    state.server = Some(format!("{}, {}", city, country));
+                } else {
+                    state.server = Some(city.to_string());
+                }
+            } else if state.colo.is_some() && state.server.is_none() {
+                // If we have colo but no city, we'll wait for RunResult.server
+                // which comes from map_colo_to_server
+            }
         }
         TestEvent::LatencySample { phase, during, rtt_ms, ok } => {
             let t = state.run_start.elapsed().as_secs_f64();

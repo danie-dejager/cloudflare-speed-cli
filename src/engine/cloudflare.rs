@@ -74,19 +74,53 @@ impl CloudflareClient {
     pub fn extract_meta_from_response(&self, resp: &reqwest::Response) -> serde_json::Value {
         let mut meta = serde_json::Map::new();
         
-        // Extract IP from headers (CF-Connecting-IP or similar)
-        if let Some(ip) = resp.headers().get("cf-connecting-ip")
-            .or_else(|| resp.headers().get("CF-Connecting-IP"))
+        // Extract from cf-meta-* headers (preferred, contains all info)
+        if let Some(ip) = resp.headers().get("cf-meta-ip")
             .and_then(|h| h.to_str().ok()) {
             meta.insert("clientIp".to_string(), serde_json::Value::String(ip.to_string()));
         }
         
-        // Extract colo from CF-RAY header (format: rayid-colo)
-        if let Some(ray) = resp.headers().get("cf-ray")
-            .or_else(|| resp.headers().get("CF-RAY"))
+        if let Some(colo) = resp.headers().get("cf-meta-colo")
             .and_then(|h| h.to_str().ok()) {
-            if let Some(colo) = ray.split('-').nth(1) {
-                meta.insert("colo".to_string(), serde_json::Value::String(colo.to_string()));
+            meta.insert("colo".to_string(), serde_json::Value::String(colo.to_string()));
+        }
+        
+        if let Some(city) = resp.headers().get("cf-meta-city")
+            .and_then(|h| h.to_str().ok()) {
+            meta.insert("city".to_string(), serde_json::Value::String(city.to_string()));
+        }
+        
+        if let Some(country) = resp.headers().get("cf-meta-country")
+            .and_then(|h| h.to_str().ok()) {
+            meta.insert("country".to_string(), serde_json::Value::String(country.to_string()));
+        }
+        
+        if let Some(asn) = resp.headers().get("cf-meta-asn")
+            .and_then(|h| h.to_str().ok()) {
+            // Try parsing as number first, fall back to string
+            if let Ok(asn_num) = asn.parse::<i64>() {
+                meta.insert("asn".to_string(), serde_json::Value::Number(asn_num.into()));
+            } else {
+                meta.insert("asn".to_string(), serde_json::Value::String(asn.to_string()));
+            }
+        }
+        
+        // Fallback to CF-Connecting-IP and CF-RAY if cf-meta-* headers not available
+        if !meta.contains_key("clientIp") {
+            if let Some(ip) = resp.headers().get("cf-connecting-ip")
+                .or_else(|| resp.headers().get("CF-Connecting-IP"))
+                .and_then(|h| h.to_str().ok()) {
+                meta.insert("clientIp".to_string(), serde_json::Value::String(ip.to_string()));
+            }
+        }
+        
+        if !meta.contains_key("colo") {
+            if let Some(ray) = resp.headers().get("cf-ray")
+                .or_else(|| resp.headers().get("CF-RAY"))
+                .and_then(|h| h.to_str().ok()) {
+                if let Some(colo) = ray.split('-').nth(1) {
+                    meta.insert("colo".to_string(), serde_json::Value::String(colo.to_string()));
+                }
             }
         }
         
