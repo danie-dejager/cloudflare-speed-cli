@@ -1,0 +1,241 @@
+use crate::model::TurnInfo;
+use anyhow::{Context, Result};
+use reqwest::Url;
+use serde::Deserialize;
+use std::time::Duration;
+
+use crate::model::RunConfig;
+
+#[derive(Clone)]
+pub struct CloudflareClient {
+    pub base_url: Url,
+    pub meas_id: String,
+    pub http: reqwest::Client,
+}
+
+impl CloudflareClient {
+    pub fn new(cfg: &RunConfig) -> Result<Self> {
+        let base_url = Url::parse(&cfg.base_url).context("invalid base_url")?;
+        let http = reqwest::Client::builder()
+            .user_agent(cfg.user_agent.clone())
+            .timeout(Duration::from_secs(30))
+            .tcp_keepalive(Duration::from_secs(15))
+            .build()
+            .context("failed to build http client")?;
+        Ok(Self {
+            base_url,
+            meas_id: cfg.meas_id.clone(),
+            http,
+        })
+    }
+
+    pub fn down_url(&self) -> Url {
+        self.base_url.join("/__down").expect("join __down")
+    }
+
+    pub fn up_url(&self) -> Url {
+        self.base_url.join("/__up").expect("join __up")
+    }
+
+    pub fn turn_url(&self) -> Url {
+        self.base_url.join("/__turn").expect("join __turn")
+    }
+
+    pub async fn probe_latency_ms(&self, during: Option<&str>, timeout_ms: u64) -> Result<(f64, Option<serde_json::Value>)> {
+        let mut url = self.down_url();
+        {
+            let mut qp = url.query_pairs_mut();
+            qp.append_pair("bytes", "0");
+            if let Some(d) = during {
+                qp.append_pair("during", d);
+            } else {
+                qp.append_pair("measId", &self.meas_id);
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let resp = self
+            .http
+            .get(url)
+            .timeout(Duration::from_millis(timeout_ms))
+            .send()
+            .await?;
+        
+        // Extract meta from headers before consuming body
+        let meta = self.extract_meta_from_response(&resp);
+        let has_meta = !meta.as_object().map(|m| m.is_empty()).unwrap_or(true);
+        
+        // Consume body to keep behavior consistent
+        let _ = resp.bytes().await;
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+        Ok((elapsed, if has_meta { Some(meta) } else { None }))
+    }
+
+    pub fn extract_meta_from_response(&self, resp: &reqwest::Response) -> serde_json::Value {
+        let mut meta = serde_json::Map::new();
+        
+        // Extract IP from headers (CF-Connecting-IP or similar)
+        if let Some(ip) = resp.headers().get("cf-connecting-ip")
+            .or_else(|| resp.headers().get("CF-Connecting-IP"))
+            .and_then(|h| h.to_str().ok()) {
+            meta.insert("clientIp".to_string(), serde_json::Value::String(ip.to_string()));
+        }
+        
+        // Extract colo from CF-RAY header (format: rayid-colo)
+        if let Some(ray) = resp.headers().get("cf-ray")
+            .or_else(|| resp.headers().get("CF-RAY"))
+            .and_then(|h| h.to_str().ok()) {
+            if let Some(colo) = ray.split('-').nth(1) {
+                meta.insert("colo".to_string(), serde_json::Value::String(colo.to_string()));
+            }
+        }
+        
+        serde_json::Value::Object(meta)
+    }
+}
+
+pub async fn fetch_meta_from_response(client: &CloudflareClient) -> Result<serde_json::Value> {
+    // Try to get meta info from a test request response headers
+    let mut url = client.down_url();
+    url.query_pairs_mut()
+        .append_pair("bytes", "0")
+        .append_pair("measId", &client.meas_id);
+    
+    let resp = client
+        .http
+        .get(url)
+        .send()
+        .await?;
+    
+    Ok(client.extract_meta_from_response(&resp))
+}
+
+#[derive(Debug, Deserialize)]
+struct TurnResponse {
+    #[serde(default, rename = "iceServers")]
+    ice_servers: Vec<IceServer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IceServer {
+    #[serde(default)]
+    urls: Vec<String>,
+    username: Option<String>,
+    credential: Option<String>,
+}
+
+pub async fn fetch_turn(client: &CloudflareClient) -> Result<TurnInfo> {
+    let url = client.turn_url();
+    let tr: TurnResponse = client
+        .http
+        .get(url)
+        .send()
+        .await?
+        .json()
+        .await
+        .context("failed to parse /__turn json")?;
+
+    let mut urls = Vec::new();
+    let mut username = None;
+    let mut credential = None;
+    for s in tr.ice_servers {
+        if username.is_none() {
+            username = s.username.clone();
+        }
+        if credential.is_none() {
+            credential = s.credential.clone();
+        }
+        urls.extend(s.urls);
+    }
+
+    Ok(TurnInfo {
+        urls,
+        username,
+        credential,
+    })
+}
+
+pub async fn fetch_meta(client: &CloudflareClient) -> Result<serde_json::Value> {
+    let mut url = client.base_url.join("/meta").context("join /meta")?;
+    // Try with measId parameter
+    url.query_pairs_mut()
+        .append_pair("measId", &client.meas_id);
+    let v: serde_json::Value = client.http.get(url).send().await?.json().await?;
+    Ok(v)
+}
+
+pub async fn fetch_locations(client: &CloudflareClient) -> Result<serde_json::Value> {
+    let url = client.base_url.join("/locations").context("join /locations")?;
+    let v: serde_json::Value = client.http.get(url).send().await?.json().await?;
+    Ok(v)
+}
+
+pub fn map_colo_to_server(locations: &serde_json::Value, colo: &str) -> Option<String> {
+    // The /locations schema may change; we keep this defensive:
+    // search for any object containing a colo-like key matching `colo`
+    // and construct a friendly display string from available fields.
+    fn visit(v: &serde_json::Value, colo: &str) -> Option<serde_json::Value> {
+        match v {
+            serde_json::Value::Array(a) => {
+                for x in a {
+                    if let Some(f) = visit(x, colo) {
+                        return Some(f);
+                    }
+                }
+                None
+            }
+            serde_json::Value::Object(m) => {
+                let keys = ["iata", "colo", "code", "id"];
+                let mut matched = false;
+                for k in keys {
+                    if m.get(k).and_then(|x| x.as_str()) == Some(colo) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if matched {
+                    return Some(serde_json::Value::Object(m.clone()));
+                }
+                for (_, x) in m {
+                    if let Some(f) = visit(x, colo) {
+                        return Some(f);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    let obj = visit(locations, colo)?;
+    let m = obj.as_object()?;
+    let city = m
+        .get("city")
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("name").and_then(|v| v.as_str()));
+    let region = m.get("region").and_then(|v| v.as_str());
+    let country = m
+        .get("country")
+        .and_then(|v| v.as_str())
+        .or_else(|| m.get("countryName").and_then(|v| v.as_str()));
+
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(colo.to_string());
+    if let Some(c) = city {
+        parts.push(c.to_string());
+    }
+    if let Some(r) = region {
+        if city.is_none() {
+            parts.push(r.to_string());
+        }
+    }
+    if let Some(c) = country {
+        parts.push(c.to_string());
+    }
+    if parts.len() >= 2 {
+        Some(parts.join(" - "))
+    } else {
+        Some(colo.to_string())
+    }
+}
+

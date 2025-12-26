@@ -1,0 +1,133 @@
+use crate::model::{ExperimentalUdpSummary, TurnInfo};
+use crate::stats::{latency_summary_from_samples, OnlineStats};
+use anyhow::{Context, Result};
+use rand::RngCore;
+use std::net::SocketAddr;
+use std::time::Duration;
+use tokio::net::UdpSocket;
+
+// Minimal STUN binding request (RFC5389):
+// - type: 0x0001
+// - length: 0
+// - magic cookie: 0x2112A442
+// - transaction id: 12 bytes random
+fn build_stun_binding_request(txid: [u8; 12]) -> [u8; 20] {
+    let mut b = [0u8; 20];
+    b[0] = 0x00;
+    b[1] = 0x01;
+    b[2] = 0x00;
+    b[3] = 0x00;
+    b[4] = 0x21;
+    b[5] = 0x12;
+    b[6] = 0xA4;
+    b[7] = 0x42;
+    b[8..20].copy_from_slice(&txid);
+    b
+}
+
+fn is_stun_binding_response(buf: &[u8], txid: [u8; 12]) -> bool {
+    if buf.len() < 20 {
+        return false;
+    }
+    // binding success response
+    if buf[0] != 0x01 || buf[1] != 0x01 {
+        return false;
+    }
+    // magic cookie
+    if buf[4] != 0x21 || buf[5] != 0x12 || buf[6] != 0xA4 || buf[7] != 0x42 {
+        return false;
+    }
+    buf[8..20] == txid
+}
+
+fn pick_stun_target(turn: &TurnInfo) -> Option<String> {
+    // Prefer stun: URLs. If none, try turn: with udp transport (might still answer binding).
+    for u in &turn.urls {
+        if u.starts_with("stun:") {
+            return Some(u.clone());
+        }
+    }
+    for u in &turn.urls {
+        if u.starts_with("turn:") {
+            return Some(u.clone());
+        }
+    }
+    None
+}
+
+fn parse_host_port(url: &str) -> Result<(String, u16)> {
+    // Accept forms:
+    // - stun:host:port
+    // - stun:host
+    // - turn:host:port?transport=udp
+    let rest = url
+        .splitn(2, ':')
+        .nth(1)
+        .context("bad stun/turn url")?;
+    let hostport = rest.split('?').next().unwrap_or(rest);
+    let mut parts = hostport.split(':');
+    let host = parts.next().unwrap_or("").to_string();
+    let port = parts
+        .next()
+        .map(|p| p.parse::<u16>().ok())
+        .flatten()
+        .unwrap_or(3478);
+    anyhow::ensure!(!host.is_empty(), "empty host in stun/turn url");
+    Ok((host, port))
+}
+
+pub async fn run_udp_like_loss_probe(turn: &TurnInfo) -> Result<ExperimentalUdpSummary> {
+    let target_url = pick_stun_target(turn).context("no stun/turn url in /__turn")?;
+    let (host, port) = parse_host_port(&target_url)?;
+
+    let mut addrs = tokio::net::lookup_host((host.as_str(), port)).await?;
+    let addr: SocketAddr = addrs.next().context("dns returned no addresses")?;
+
+    // Bind ephemeral UDP.
+    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    sock.connect(addr).await?;
+
+    let timeout = Duration::from_millis(600);
+    let interval = Duration::from_millis(80);
+    let attempts = 50u64;
+
+    let mut sent = 0u64;
+    let mut received = 0u64;
+    let mut samples = Vec::<f64>::new();
+    let mut online = OnlineStats::default();
+
+    for _ in 0..attempts {
+        sent += 1;
+
+        let mut txid = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut txid);
+        let pkt = build_stun_binding_request(txid);
+
+        let start = std::time::Instant::now();
+        let _ = sock.send(&pkt).await;
+
+        let mut buf = [0u8; 1500];
+        let recv = tokio::time::timeout(timeout, sock.recv(&mut buf)).await;
+        match recv {
+            Ok(Ok(n)) if is_stun_binding_response(&buf[..n], txid) => {
+                received += 1;
+                let ms = start.elapsed().as_secs_f64() * 1000.0;
+                samples.push(ms);
+                online.push(ms);
+            }
+            _ => {
+                // loss/timeout
+            }
+        }
+
+        tokio::time::sleep(interval).await;
+    }
+
+    let latency = latency_summary_from_samples(sent, received, &samples, online.stddev());
+    Ok(ExperimentalUdpSummary {
+        target: Some(target_url),
+        latency,
+    })
+}
+
+
