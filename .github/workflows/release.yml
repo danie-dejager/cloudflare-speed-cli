@@ -145,16 +145,22 @@ jobs:
             ${SHA256_CMD} ${ARCHIVE_NAME} > ${ARCHIVE_NAME}.sha256
           else
             ARCHIVE_NAME=${{ matrix.bin-name }}-${{ matrix.target }}-v${VERSION}.zip
-            cd target/${{ matrix.target }}/release
-            if command -v zip >/dev/null 2>&1; then
-              zip ../../../../${ARCHIVE_NAME} ${{ matrix.bin-name }}
+            # Windows: install zip or use PowerShell
+            if [ "${{ matrix.os }}" = "windows-2022" ]; then
+              # Try to use 7zip if available, otherwise use PowerShell
+              if command -v 7z >/dev/null 2>&1; then
+                cd target/${{ matrix.target }}/release
+                7z a ../../../../${ARCHIVE_NAME} ${{ matrix.bin-name }}
+                cd ../../..
+              else
+                # Use PowerShell from workspace root
+                powershell -Command "Compress-Archive -Path 'target/${{ matrix.target }}/release/${{ matrix.bin-name }}' -DestinationPath '${ARCHIVE_NAME}' -Force"
+              fi
             else
-              # Windows: use PowerShell Compress-Archive with absolute paths
-              BIN_PATH=$(pwd)/${{ matrix.bin-name }}
-              ARCHIVE_PATH=$(cd ../../../../ && pwd)/${ARCHIVE_NAME}
-              powershell -Command "Compress-Archive -Path '$BIN_PATH' -DestinationPath '$ARCHIVE_PATH' -Force"
+              cd target/${{ matrix.target }}/release
+              zip ../../../../${ARCHIVE_NAME} ${{ matrix.bin-name }}
+              cd ../../..
             fi
-            cd ../../..
             ${SHA256_CMD} ${ARCHIVE_NAME} > ${ARCHIVE_NAME}.sha256
           fi
 
