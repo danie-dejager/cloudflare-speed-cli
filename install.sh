@@ -27,7 +27,7 @@ case "$(uname -m)" in
 esac
 echo "Architecture: ${ARCH}" >&2
 
-FILE="${PKG_NAME}${ARCH}-${OS}.tar.xz"
+FILE="${PKG_NAME}-${ARCH}-${OS}.tar.xz"
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 FILE_URL="${BASE_URL}/${FILE}"
 SHA256_URL="${BASE_URL}/${FILE}.sha256"
@@ -60,7 +60,7 @@ echo "Extracting archive..." >&2
 tar -xJf "$FILE"
 
 # The archive extracts to a directory, find the binary inside
-EXTRACTED_DIR="${PKG_NAME}${ARCH}-${OS}"
+EXTRACTED_DIR="${PKG_NAME}-${ARCH}-${OS}"
 if [ -d "$EXTRACTED_DIR" ]; then
   BINARY_PATH="${EXTRACTED_DIR}/${BIN}"
 else
