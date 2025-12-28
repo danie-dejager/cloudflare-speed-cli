@@ -157,6 +157,16 @@ impl TestEngine {
             loaded_latency_upload,
             turn,
             experimental_udp,
+            // Network information - will be populated by TUI when available
+            ip: None,
+            colo: None,
+            asn: None,
+            as_org: None,
+            interface_name: None,
+            network_name: None,
+            is_wireless: None,
+            interface_mac: None,
+            link_speed_mbps: None,
         })
     }
 }

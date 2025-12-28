@@ -52,9 +52,9 @@ pub fn export_json(path: &Path, result: &RunResult) -> Result<()> {
 
 pub fn export_csv(path: &Path, result: &RunResult) -> Result<()> {
     let mut out = String::new();
-    out.push_str("timestamp_utc,base_url,meas_id,server,download_mbps,upload_mbps,idle_p50_ms,idle_p90_ms,idle_p99_ms,idle_loss,dl_loaded_p50_ms,dl_loaded_p90_ms,dl_loaded_p99_ms,dl_loaded_loss,ul_loaded_p50_ms,ul_loaded_p90_ms,ul_loaded_p99_ms,ul_loaded_loss\n");
+    out.push_str("timestamp_utc,base_url,meas_id,server,download_mbps,upload_mbps,idle_p50_ms,idle_p90_ms,idle_p99_ms,idle_loss,dl_loaded_p50_ms,dl_loaded_p90_ms,dl_loaded_p99_ms,dl_loaded_loss,ul_loaded_p50_ms,ul_loaded_p90_ms,ul_loaded_p99_ms,ul_loaded_loss,ip,colo,asn,as_org,interface_name,network_name,is_wireless,interface_mac,link_speed_mbps\n");
     out.push_str(&format!(
-        "{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.6}\n",
+        "{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.6},{},{},{},{},{},{},{},{},{}\n",
         csv_escape(&result.timestamp_utc),
         csv_escape(&result.base_url),
         csv_escape(&result.meas_id),
@@ -73,6 +73,15 @@ pub fn export_csv(path: &Path, result: &RunResult) -> Result<()> {
         result.loaded_latency_upload.p90_ms.unwrap_or(f64::NAN),
         result.loaded_latency_upload.p99_ms.unwrap_or(f64::NAN),
         result.loaded_latency_upload.loss,
+        csv_escape(result.ip.as_deref().unwrap_or("")),
+        csv_escape(result.colo.as_deref().unwrap_or("")),
+        csv_escape(result.asn.as_deref().unwrap_or("")),
+        csv_escape(result.as_org.as_deref().unwrap_or("")),
+        csv_escape(result.interface_name.as_deref().unwrap_or("")),
+        csv_escape(result.network_name.as_deref().unwrap_or("")),
+        result.is_wireless.map(|w| if w { "true" } else { "false" }).unwrap_or(""),
+        csv_escape(result.interface_mac.as_deref().unwrap_or("")),
+        result.link_speed_mbps.map(|s| s.to_string()).unwrap_or_else(|| "".to_string()),
     ));
     std::fs::write(path, out).context("write export csv")?;
     Ok(())

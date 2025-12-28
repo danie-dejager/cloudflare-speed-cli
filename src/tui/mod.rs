@@ -402,7 +402,7 @@ pub async fn run(args: Cli) -> Result<()> {
                             // Only save on dashboard (auto-save location)
                             if state.tab == 0 {
                                 if let Some(r) = state.last_result.as_ref() {
-                                    match save_result_json(r) {
+                                    match save_result_json(r, &state) {
                                         Ok(p) => {
                                             state.info = format!("Saved JSON: {}", p.display());
                                         }
@@ -420,11 +420,11 @@ pub async fn run(args: Cli) -> Result<()> {
                             if state.tab == 1 && !state.history.is_empty() {
                                 if state.history_selected < state.history.len() {
                                     let r = &state.history[state.history_selected];
-                                    match export_result_json(r) {
+                                    match export_result_json(r, &state) {
                                         Ok(p) => {
                                             let path_str = p.to_string_lossy().to_string();
                                             state.last_exported_path = Some(path_str.clone());
-                                            state.info = format!("Exported JSON: {}", p.display());
+                                            state.info = format!("Exported JSON: {} (press 'y' to copy path)", p.display());
                                         }
                                         Err(e) => {
                                             state.info = format!("JSON export failed: {e:#}");
@@ -437,11 +437,11 @@ pub async fn run(args: Cli) -> Result<()> {
                             if state.tab == 1 && !state.history.is_empty() {
                                 if state.history_selected < state.history.len() {
                                     let r = &state.history[state.history_selected];
-                                    match export_result_csv(r) {
+                                    match export_result_csv(r, &state) {
                                         Ok(p) => {
                                             let path_str = p.to_string_lossy().to_string();
                                             state.last_exported_path = Some(path_str.clone());
-                                            state.info = format!("Exported CSV: {}", p.display());
+                                            state.info = format!("Exported CSV: {} (press 'y' to copy path)", p.display());
                                         }
                                         Err(e) => {
                                             state.info = format!("CSV export failed: {e:#}");
@@ -456,7 +456,13 @@ pub async fn run(args: Cli) -> Result<()> {
                                 if let Some(ref path) = state.last_exported_path {
                                     match copy_to_clipboard(path) {
                                         Ok(_) => {
-                                            state.info = format!("Copied to clipboard: {}", path);
+                                            // Truncate very long paths in the message
+                                            let display_path = if path.len() > 60 {
+                                                format!("{}...", &path[..57])
+                                            } else {
+                                                path.clone()
+                                            };
+                                            state.info = format!("✓ Copied to clipboard: {}", display_path);
                                         }
                                         Err(e) => {
                                             state.info = format!("Clipboard copy failed: {e:#}");
@@ -536,7 +542,8 @@ pub async fn run(args: Cli) -> Result<()> {
                             match h.await {
                                 Ok(Ok(r)) => {
                                     if state.auto_save {
-                                        crate::storage::save_run(&r).ok();
+                                        let enriched = enrich_result_with_network_info(&r, &state);
+                                        crate::storage::save_run(&enriched).ok();
                                     }
                                     if let Some(meta) = r.meta.as_ref() {
                                         // Try multiple possible field names for IP
@@ -566,7 +573,9 @@ pub async fn run(args: Cli) -> Result<()> {
                                     if r.server.is_some() {
                                         state.server = r.server.clone();
                                     }
-                                    state.last_result = Some(r);
+                                    // Enrich result with network info before storing
+                                    let enriched = enrich_result_with_network_info(&r, &state);
+                                    state.last_result = Some(enriched);
                                     state.history = crate::storage::load_recent(20).unwrap_or_default();
                                     state.info = "Done. (r rerun, q quit)".into();
                                 }
@@ -1298,14 +1307,34 @@ fn draw_help(area: Rect, f: &mut ratatui::Frame) {
     f.render_widget(p, area);
 }
 
+/// Enrich RunResult with network information from UiState.
+fn enrich_result_with_network_info(r: &RunResult, state: &UiState) -> RunResult {
+    let mut enriched = r.clone();
+    enriched.ip = state.ip.clone();
+    enriched.colo = state.colo.clone();
+    enriched.asn = state.asn.clone();
+    enriched.as_org = state.as_org.clone();
+    enriched.interface_name = state.interface_name.clone();
+    enriched.network_name = state.network_name.clone();
+    enriched.is_wireless = state.is_wireless;
+    enriched.interface_mac = state.interface_mac.clone();
+    enriched.link_speed_mbps = state.link_speed_mbps;
+    // Server might already be set, but update from state if available
+    if enriched.server.is_none() {
+        enriched.server = state.server.clone();
+    }
+    enriched
+}
+
 /// Save JSON to the default auto-save location.
-fn save_result_json(r: &RunResult) -> Result<std::path::PathBuf> {
-    crate::storage::save_run(r)
+fn save_result_json(r: &RunResult, state: &UiState) -> Result<std::path::PathBuf> {
+    let enriched = enrich_result_with_network_info(r, state);
+    crate::storage::save_run(&enriched)
 }
 
 /// Export JSON to a user-specified file location.
 /// Returns the absolute path of the exported file.
-fn export_result_json(r: &RunResult) -> Result<std::path::PathBuf> {
+fn export_result_json(r: &RunResult, state: &UiState) -> Result<std::path::PathBuf> {
     // Generate a default filename based on timestamp
     let default_name = format!(
         "cloudflare-speed-{}-{}.json",
@@ -1316,13 +1345,14 @@ fn export_result_json(r: &RunResult) -> Result<std::path::PathBuf> {
     // Get absolute path from current directory
     let current_dir = std::env::current_dir().context("get current directory")?;
     let path = current_dir.join(default_name);
-    crate::storage::export_json(&path, r)?;
+    let enriched = enrich_result_with_network_info(r, state);
+    crate::storage::export_json(&path, &enriched)?;
     Ok(path)
 }
 
 /// Export CSV to a user-specified file location.
 /// Returns the absolute path of the exported file.
-fn export_result_csv(r: &RunResult) -> Result<std::path::PathBuf> {
+fn export_result_csv(r: &RunResult, state: &UiState) -> Result<std::path::PathBuf> {
     // Generate a default filename based on timestamp
     let default_name = format!(
         "cloudflare-speed-{}-{}.csv",
@@ -1333,15 +1363,56 @@ fn export_result_csv(r: &RunResult) -> Result<std::path::PathBuf> {
     // Get absolute path from current directory
     let current_dir = std::env::current_dir().context("get current directory")?;
     let path = current_dir.join(default_name);
-    crate::storage::export_csv(&path, r)?;
+    let enriched = enrich_result_with_network_info(r, state);
+    crate::storage::export_csv(&path, &enriched)?;
     Ok(path)
 }
 
+// Global clipboard manager channel - initialized once on first use
+use std::sync::OnceLock;
+use std::sync::mpsc as std_mpsc;
+
+static CLIPBOARD_SENDER: OnceLock<std_mpsc::Sender<String>> = OnceLock::new();
+
+/// Initialize the clipboard manager thread if not already initialized.
+/// This creates a background thread that processes clipboard operations sequentially,
+/// keeping each clipboard instance alive for a sufficient duration.
+fn init_clipboard_manager() -> Result<&'static std_mpsc::Sender<String>> {
+    CLIPBOARD_SENDER.get_or_init(|| {
+        let (tx, rx) = std_mpsc::channel::<String>();
+        
+        // Spawn a dedicated thread to manage clipboard operations
+        std::thread::spawn(move || {
+            use arboard::Clipboard;
+            
+            for text in rx {
+                // Create a new clipboard instance for each operation
+                if let Ok(mut clipboard) = Clipboard::new() {
+                    // Set the text
+                    if clipboard.set_text(&text).is_ok() {
+                        // Keep the clipboard instance alive for 2 seconds
+                        // This gives clipboard managers plenty of time to read the contents
+                        std::thread::sleep(Duration::from_secs(2));
+                    }
+                    // Clipboard is dropped here
+                }
+            }
+        });
+        
+        tx
+    });
+    
+    CLIPBOARD_SENDER.get().ok_or_else(|| anyhow::anyhow!("Failed to initialize clipboard manager"))
+}
+
 /// Copy text to clipboard.
+/// Uses a background thread manager to keep clipboard instances alive for a sufficient duration
+/// to ensure clipboard managers have time to read the contents on Linux.
+/// Returns immediately after queuing the clipboard operation, without blocking the main thread.
 fn copy_to_clipboard(text: &str) -> Result<()> {
-    use arboard::Clipboard;
-    let mut clipboard = Clipboard::new().context("initialize clipboard")?;
-    clipboard.set_text(text).context("copy to clipboard")?;
+    let sender = init_clipboard_manager()?;
+    sender.send(text.to_string())
+        .map_err(|_| anyhow::anyhow!("Clipboard manager channel closed"))?;
     Ok(())
 }
 

@@ -38,39 +38,8 @@ path = "src/main.rs"
 default = ["tui"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:arboard"]
 
-[package.metadata.deb]
-maintainer = "kavehtehrani <codemonkey13x@gmail.com>"
-copyright = "Copyright (c) 2024, kavehtehrani"
-extended-description = """\
-A CLI tool that displays network speed test results from Cloudflare's speed test service in a TUI interface.
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
-Features:
-- Interactive TUI with real-time charts and statistics
-- Speed tests (download/upload throughput, idle latency, loaded latency)
-- Test history management
-- JSON export
-- Text and JSON output modes for scripting
-"""
-depends = "$auto"
-section = "net"
-priority = "optional"
-
-[package.metadata.rpm]
-license = "GPL-3.0"
-group = "Applications/Internet"
-release = "1"
-
-[package.metadata.rpm.targets.x86_64-unknown-linux-gnu]
-path = "cloudflare-speed-cli"
-
-summary = "CLI tool for Cloudflare speed testing with TUI interface"
-description = """\
-A CLI tool that displays network speed test results from Cloudflare's speed test service in a TUI interface.
-
-Features:
-- Interactive TUI with real-time charts and statistics
-- Speed tests (download/upload throughput, idle latency, loaded latency)
-- Test history management
-- JSON export
-- Text and JSON output modes for scripting
-"""

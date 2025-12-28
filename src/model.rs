@@ -95,6 +95,25 @@ pub struct RunResult {
     pub loaded_latency_upload: LatencySummary,
     pub turn: Option<TurnInfo>,
     pub experimental_udp: Option<ExperimentalUdpSummary>,
+    // Network information
+    #[serde(default)]
+    pub ip: Option<String>,
+    #[serde(default)]
+    pub colo: Option<String>,
+    #[serde(default)]
+    pub asn: Option<String>,
+    #[serde(default)]
+    pub as_org: Option<String>,
+    #[serde(default)]
+    pub interface_name: Option<String>,
+    #[serde(default)]
+    pub network_name: Option<String>,
+    #[serde(default)]
+    pub is_wireless: Option<bool>,
+    #[serde(default)]
+    pub interface_mac: Option<String>,
+    #[serde(default)]
+    pub link_speed_mbps: Option<u64>,
 }
 
 

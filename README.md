@@ -15,63 +15,37 @@ A CLI tool that displays network speed test results from Cloudflare's speed test
 
 ## Installation
 
-### Linux Package Managers
+### Linux (All Distributions)
 
-#### Debian/Ubuntu (DEB)
-
-```bash
-# Download the .deb package from GitHub Releases
-wget https://github.com/kavehtehrani/cloudflare-speed-cli/releases/download/v0.1.0/cloudflare-speed-cli_0.1.0_amd64.deb
-
-# Install using apt/dpkg
-sudo apt install ./cloudflare-speed-cli_0.1.0_amd64.deb
-# or
-sudo dpkg -i cloudflare-speed-cli_0.1.0_amd64.deb
-```
-
-#### Fedora/RHEL/CentOS (RPM)
+Download the static binary (works on any Linux distribution):
 
 ```bash
-# Download the .rpm package from GitHub Releases
-wget https://github.com/kavehtehrani/cloudflare-speed-cli/releases/download/v0.1.0/cloudflare-speed-cli-0.1.0-1.x86_64.rpm
+# For x86_64 systems
+curl -L https://github.com/kavehtehrani/cloudflare-speed-cli/releases/latest/download/cloudflare-speed-cli_-x86_64-unknown-linux-musl.tar.xz | tar xJ
+sudo mv cloudflare-speed-cli /usr/local/bin/
 
-# Install using dnf/yum
-sudo dnf install ./cloudflare-speed-cli-0.1.0-1.x86_64.rpm
-# or
-sudo yum install ./cloudflare-speed-cli-0.1.0-1.x86_64.rpm
+# For ARM64 systems (Raspberry Pi, etc.)
+curl -L https://github.com/kavehtehrani/cloudflare-speed-cli/releases/latest/download/cloudflare-speed-cli_-aarch64-unknown-linux-musl.tar.xz | tar xJ
+sudo mv cloudflare-speed-cli /usr/local/bin/
 ```
 
 ### macOS
 
-#### Homebrew
-
 ```bash
-# Install directly from the main repository
-brew install kavehtehrani/cloudflare-speed-cli/cloudflare-speed-cli
+# For Intel Macs
+curl -L https://github.com/kavehtehrani/cloudflare-speed-cli/releases/latest/download/cloudflare-speed-cli_-x86_64-apple-darwin.tar.xz | tar xJ
+sudo mv cloudflare-speed-cli /usr/local/bin/
+
+# For Apple Silicon (M1/M2/M3)
+curl -L https://github.com/kavehtehrani/cloudflare-speed-cli/releases/latest/download/cloudflare-speed-cli_-aarch64-apple-darwin.tar.xz | tar xJ
+sudo mv cloudflare-speed-cli /usr/local/bin/
 ```
 
-The Homebrew formula is automatically updated when new releases are published.
+### Windows
 
-### Direct Download (All Platforms)
-
-Download pre-built binaries from [GitHub Releases](https://github.com/kavehtehrani/cloudflare-speed-cli/releases):
-
-```bash
-# Linux (x86_64)
-wget https://github.com/kavehtehrani/cloudflare-speed-cli/releases/download/v0.1.0/cloudflare-speed-cli-x86_64-unknown-linux-gnu-v0.1.0.tar.gz
-tar -xzf cloudflare-speed-cli-x86_64-unknown-linux-gnu-v0.1.0.tar.gz
-sudo mv cloudflare-speed-cli/usr/local/bin/
-
-# macOS (Intel)
-wget https://github.com/kavehtehrani/cloudflare-speed-cli/releases/download/v0.1.0/cloudflare-speed-cli-x86_64-apple-darwin-v0.1.0.tar.gz
-tar -xzf cloudflare-speed-cli-x86_64-apple-darwin-v0.1.0.tar.gz
-sudo mv cloudflare-speed-cli/usr/local/bin/
-
-# macOS (Apple Silicon)
-wget https://github.com/kavehtehrani/cloudflare-speed-cli/releases/download/v0.1.0/cloudflare-speed-cli-aarch64-apple-darwin-v0.1.0.tar.gz
-tar -xzf cloudflare-speed-cli-aarch64-apple-darwin-v0.1.0.tar.gz
-sudo mv cloudflare-speed-cli/usr/local/bin/
-```
+1. Download `cloudflare-speed-cli_-x86_64-pc-windows-msvc.zip` from [GitHub Releases](https://github.com/kavehtehrani/cloudflare-speed-cli/releases)
+2. Extract the ZIP file
+3. Move `cloudflare-speed-cli.exe` to a directory in your PATH (e.g., `C:\Windows\System32` or add a custom directory to PATH)
 
 ### From Source (Cargo)
 
@@ -79,14 +53,6 @@ sudo mv cloudflare-speed-cli/usr/local/bin/
 cargo install --git https://github.com/kavehtehrani/cloudflare-speed-cli --features tui
 ```
 
-### AppImage (Universal Linux - No Installation Required)
-
-Download the AppImage from [GitHub Releases](https://github.com/kavehtehrani/cloudflare-speed-cli/releases), make it executable, and run:
-
-```bash
-chmod +x cloudflare-speed-cli-x86_64.AppImage
-./cloudflare-speed-cli-x86_64.AppImage
-```
 
 ## Usage
 
