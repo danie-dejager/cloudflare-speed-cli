@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/kavehtehrani/cloudflare-speed-cli/m
 Download the static binary for your system from the
 [latest release](https://github.com/kavehtehrani/cloudflare-speed-cli/releases).
 
+_Note: I have checked the binaries on Linux (x64 and ARM64) and on Windows 11 but I do not have an Apple device. If there is any issue please do let me know!_
+
 ## Usage
 
 Run with the TUI (default):
@@ -64,7 +66,7 @@ Uses endpoints from https://speed.cloudflare.com/
 
 ## Outstanding Issues
 
-* Network information on Windows is incomplete. I haven't used Windows in many years and unless there's demand for it I likely won't implement this part. Feel free to open a PR or an issue and we can chat. Honestly the only reason there's a Windows binary at all is because ['cargo-dist'](https://github.com/axodotdev/cargo-dist) made it so easy to do so.
+* Network information on Windows is incomplete. I haven't used Windows (outside gaming) in many years and unless there's demand for it I likely won't implement this part. Feel free to open a PR or an issue and we can chat. Honestly the only reason there's a Windows binary at all is because ['cargo-dist'](https://github.com/axodotdev/cargo-dist) made it so easy to do so.
 
 ## Contributing
 
