@@ -64,16 +64,19 @@ struct UiState {
     last_result: Option<RunResult>,
     history: Vec<RunResult>,
     history_selected: usize, // Index of selected history item (0 = most recent)
+    history_scroll_offset: usize, 
+    history_loaded_count: usize,
+    initial_history_load_size: usize, // Initial load size based on terminal height 
     ip: Option<String>,
     colo: Option<String>,
     server: Option<String>,
     asn: Option<String>,
     as_org: Option<String>,
     auto_save: bool,
-    last_exported_path: Option<String>, // Full path of last exported file (for clipboard)
+    last_exported_path: Option<String>, 
     // Network interface information
     interface_name: Option<String>,
-    network_name: Option<String>, // SSID for wireless, or network name
+    network_name: Option<String>, 
     is_wireless: Option<bool>,
     interface_mac: Option<String>,
     link_speed_mbps: Option<u64>,
@@ -117,6 +120,9 @@ impl Default for UiState {
             last_result: None,
             history: Vec::new(),
             history_selected: 0,
+            history_scroll_offset: 0,
+            history_loaded_count: 0,
+            initial_history_load_size: 66, // Default initial load size
             ip: None,
             colo: None,
             server: None,
@@ -328,12 +334,21 @@ pub async fn run(args: Cli) -> Result<()> {
     let mut terminal = Terminal::new(backend).context("create terminal")?;
     terminal.clear().ok();
 
+    // Get terminal size to determine initial history load
+    // Load 3x the visible height initially (for smooth scrolling)
+    // Default to 24 rows if we can't get terminal size
+    let initial_load = terminal.size()
+        .map(|size| ((size.height as usize).saturating_sub(2) * 3).max(20))
+        .unwrap_or(66); // Default: (24-2)*3 = 66 items
+
     let mut state = UiState {
         phase: Phase::IdleLatency,
         auto_save: args.auto_save,
         ..Default::default()
     };
-    state.history = crate::storage::load_recent(20).unwrap_or_default();
+    state.initial_history_load_size = initial_load;
+    state.history = crate::storage::load_recent(initial_load).unwrap_or_default();
+    state.history_loaded_count = state.history.len();
 
     // Gather network interface information
     // If interface is specified via CLI, use that; otherwise auto-detect
@@ -503,6 +518,7 @@ pub async fn run(args: Cli) -> Result<()> {
                             // Reset history selection when switching to history tab
                             if new_tab == 1 {
                                 state.history_selected = 0;
+                                state.history_scroll_offset = 0;
                             }
                         }
                         (_, KeyCode::Char('?')) => {
@@ -514,6 +530,10 @@ pub async fn run(args: Cli) -> Result<()> {
                                 // Up/k goes to newer items (lower index, towards 0)
                                 if state.history_selected > 0 {
                                     state.history_selected -= 1;
+                                    // Auto-scroll: if selected item is above visible area, scroll up
+                                    if state.history_selected < state.history_scroll_offset {
+                                        state.history_scroll_offset = state.history_selected;
+                                    }
                                 }
                             }
                         }
@@ -523,6 +543,35 @@ pub async fn run(args: Cli) -> Result<()> {
                                 // Allow navigation through all items; display will show what fits
                                 if state.history_selected < state.history.len().saturating_sub(1) {
                                     state.history_selected += 1;
+                                    // Auto-scroll: keep selected item visible
+                                    // Use a reasonable estimate for max_items (will be recalculated in draw)
+                                    let estimated_max_items = 30; // reasonable default
+                                    if state.history_selected >= state.history_scroll_offset + estimated_max_items {
+                                        state.history_scroll_offset = state.history_selected.saturating_sub(estimated_max_items - 1);
+                                    }
+                                    
+                                    // Lazy load: if we're near the end of loaded items, load more
+                                    let load_threshold = state.history_loaded_count.saturating_sub(10);
+                                    if state.history_selected >= load_threshold && state.history_loaded_count == state.history.len() {
+                                        // Load more items (another batch of the same size)
+                                        let current_count = state.history.len();
+                                        let load_more = current_count.max(20); // Load at least as many as we have, or 20
+                                        if let Ok(more_history) = crate::storage::load_recent(load_more) {
+                                            // Only add items we don't already have
+                                            let existing_ids: std::collections::HashSet<_> = state.history
+                                                .iter()
+                                                .map(|r| &r.meas_id)
+                                                .collect();
+                                            let new_items: Vec<_> = more_history
+                                                .into_iter()
+                                                .filter(|r| !existing_ids.contains(&r.meas_id))
+                                                .collect();
+                                            if !new_items.is_empty() {
+                                                state.history.extend(new_items);
+                                                state.history_loaded_count = state.history.len();
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -535,11 +584,16 @@ pub async fn run(args: Cli) -> Result<()> {
                                         state.info = format!("Delete failed: {e:#}");
                                     } else {
                                         state.history.remove(state.history_selected);
+                                        // Adjust scroll offset if needed
+                                        if state.history_scroll_offset >= state.history.len() && !state.history.is_empty() {
+                                            state.history_scroll_offset = state.history.len().saturating_sub(20).max(0);
+                                        }
                                         // Adjust selection if needed
                                         if state.history_selected >= state.history.len() && !state.history.is_empty() {
                                             state.history_selected = state.history.len() - 1;
                                         } else if state.history.is_empty() {
                                             state.history_selected = 0;
+                                            state.history_scroll_offset = 0;
                                         }
                                         state.info = "Deleted".into();
                                     }
@@ -592,7 +646,16 @@ pub async fn run(args: Cli) -> Result<()> {
                                     // Enrich result with network info before storing
                                     let enriched = enrich_result_with_network_info(&r, &state);
                                     state.last_result = Some(enriched);
-                                    state.history = crate::storage::load_recent(20).unwrap_or_default();
+                                    // Reload history to include the new test
+                                    // Load at least one more than we had before to ensure the new test is included
+                                    let reload_size = (state.history_loaded_count + 1).max(state.initial_history_load_size);
+                                    state.history = crate::storage::load_recent(reload_size).unwrap_or_default();
+                                    state.history_loaded_count = state.history.len();
+                                    // Reset selection to show the new test (most recent) if on history tab
+                                    if state.tab == 1 {
+                                        state.history_selected = 0;
+                                        state.history_scroll_offset = 0;
+                                    }
                                     state.info = "Done. (r rerun, q quit)".into();
                                 }
                                 Ok(Err(e)) => state.info = format!("Run failed: {e:#}"),
@@ -1558,8 +1621,27 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
 
 fn draw_history(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
     let mut lines: Vec<Line> = Vec::new();
+    
+    // Calculate how many items can fit in the available area
+    // Subtract 2 for header lines
+    let max_items = (area.height as usize).saturating_sub(2);
+    
+    // Show total count and current position
+    let total_count = state.history.len();
+    let current_pos = if total_count > 0 {
+        state.history_selected + 1
+    } else {
+        0
+    };
+    
     lines.push(Line::from(vec![
-        Span::raw("Most recent runs ("),
+        Span::raw(format!("History ({}/{}", current_pos, total_count)),
+        if total_count > max_items {
+            Span::raw(format!(", showing {} items", max_items))
+        } else {
+            Span::raw("")
+        },
+        Span::raw(") - "),
         Span::styled("↑/↓/j/k", Style::default().fg(Color::Magenta)),
         Span::raw(": navigate, "),
         Span::styled("d", Style::default().fg(Color::Magenta)),
@@ -1567,19 +1649,33 @@ fn draw_history(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         Span::styled("e", Style::default().fg(Color::Magenta)),
         Span::raw(": export JSON, "),
         Span::styled("c", Style::default().fg(Color::Magenta)),
-        Span::raw(": export CSV):"),
+        Span::raw(": export CSV"),
     ]));
     lines.push(Line::from(""));
 
-    // Calculate how many items can fit in the available area
-    // Subtract 2 for header lines, and 1 more for the "No history" message if needed
-    let max_items = (area.height as usize).saturating_sub(2);
-
-    // History is already ordered newest first, so we display it directly
-    let history_display: Vec<_> = state.history.iter().take(max_items).collect();
-    for (i, r) in history_display.iter().enumerate() {
-        // i directly maps to history index since we're not reversing
-        let is_selected = state.tab == 1 && i == state.history_selected;
+    // Apply scroll offset and take only visible items
+    // Auto-adjust scroll to keep selected item visible (this should have been done in event handler, but handle edge cases here)
+    let scroll_offset = {
+        let mut offset = state.history_scroll_offset.min(state.history.len().saturating_sub(1));
+        // Ensure selected item is visible
+        if state.history_selected < offset {
+            offset = state.history_selected;
+        } else if state.history_selected >= offset + max_items {
+            offset = state.history_selected.saturating_sub(max_items - 1);
+        }
+        offset
+    };
+    
+    let history_display: Vec<_> = state.history
+        .iter()
+        .skip(scroll_offset)
+        .take(max_items)
+        .collect();
+    
+    for (display_idx, r) in history_display.iter().enumerate() {
+        // Calculate actual history index (accounting for scroll offset)
+        let history_idx = scroll_offset + display_idx;
+        let is_selected = state.tab == 1 && history_idx == state.history_selected;
 
         // Parse and format timestamp to human-readable format in local timezone
         let timestamp_str: String = {
@@ -1675,7 +1771,7 @@ fn draw_history(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         };
 
         // Line number (1-indexed, newest = 1)
-        let line_num = i + 1;
+        let line_num = history_idx + 1;
 
         lines.push(Line::from(vec![
             Span::styled(
@@ -1720,6 +1816,30 @@ fn draw_history(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
                     r.idle_latency.p50_ms.unwrap_or(f64::NAN)
                 ),
                 if is_selected { style } else { Style::default() },
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!(
+                    "{}",
+                    r.interface_name.as_deref().unwrap_or("-")
+                ),
+                if is_selected {
+                    style
+                } else {
+                    Style::default().fg(Color::Blue)
+                },
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!(
+                    "{}",
+                    r.network_name.as_deref().or_else(|| r.interface_name.as_deref()).unwrap_or("-")
+                ),
+                if is_selected {
+                    style
+                } else {
+                    Style::default().fg(Color::Magenta)
+                },
             ),
         ]));
     }
