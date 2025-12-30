@@ -15,7 +15,7 @@ A CLI tool that displays network speed test results from Cloudflare's speed test
 - **History**: View and manage past test results
 - **Export**: Save results as JSON
 - **Text/JSON Modes**: Headless operation for scripting
-- **Interface Binding**: Bind to specific network interface or source IP for Multi-WAN, Site-to-Site, Proxy, and WireGuard testing
+- **Interface Binding**: Bind to specific network interface or source IP
 
 ## Installation
 
@@ -64,7 +64,8 @@ cloudflare-speed-cli --help
 
 ## Source
 
-Uses endpoints from https://speed.cloudflare.com/
+Uses endpoints from [speed.cloudflare.com](https://speed.cloudflare.com/)
+You can read more about how Cloudflare's speedtest works [here](https://speed.cloudflare.com/about/).
 
 ## Outstanding Issues
 
