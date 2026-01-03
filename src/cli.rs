@@ -88,6 +88,10 @@ pub struct Cli {
     /// Automatically start a test when the app launches
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub test_on_launch: bool,
+
+    /// Attach custom comments to this run (saved/exported and shown in TUI status)
+    #[arg(long)]
+    pub comments: Option<String>,
 }
 
 pub async fn run(args: Cli) -> Result<()> {
@@ -122,6 +126,7 @@ pub fn build_config(args: &Cli) -> RunConfig {
     RunConfig {
         base_url: args.base_url.clone(),
         meas_id: gen_meas_id(),
+        comments: args.comments.clone(),
         download_bytes_per_req: args.download_bytes_per_req,
         upload_bytes_per_req: args.upload_bytes_per_req,
         concurrency: args.concurrency,
@@ -270,6 +275,11 @@ async fn run_text(args: Cli) -> Result<()> {
     }
     if let Some(server) = enriched.server.as_deref() {
         println!("Server: {server}");
+    }
+    if let Some(comments) = enriched.comments.as_deref() {
+        if !comments.trim().is_empty() {
+            println!("Comments: {}", comments);
+        }
     }
 
     // Compute and display throughput metrics (mean, median, p25, p75)

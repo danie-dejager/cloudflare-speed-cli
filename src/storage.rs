@@ -58,12 +58,13 @@ pub fn export_csv(path: &Path, result: &RunResult) -> Result<()> {
         std::fs::create_dir_all(parent).context("create export directory")?;
     }
     let mut out = String::new();
-    out.push_str("timestamp_utc,base_url,meas_id,server,download_mbps,upload_mbps,idle_mean_ms,idle_median_ms,idle_p25_ms,idle_p75_ms,idle_loss,dl_loaded_mean_ms,dl_loaded_median_ms,dl_loaded_p25_ms,dl_loaded_p75_ms,dl_loaded_loss,ul_loaded_mean_ms,ul_loaded_median_ms,ul_loaded_p25_ms,ul_loaded_p75_ms,ul_loaded_loss,ip,colo,asn,as_org,interface_name,network_name,is_wireless,interface_mac,link_speed_mbps\n");
+    out.push_str("timestamp_utc,base_url,meas_id,comments,server,download_mbps,upload_mbps,idle_mean_ms,idle_median_ms,idle_p25_ms,idle_p75_ms,idle_loss,dl_loaded_mean_ms,dl_loaded_median_ms,dl_loaded_p25_ms,dl_loaded_p75_ms,dl_loaded_loss,ul_loaded_mean_ms,ul_loaded_median_ms,ul_loaded_p25_ms,ul_loaded_p75_ms,ul_loaded_loss,ip,colo,asn,as_org,interface_name,network_name,is_wireless,interface_mac,link_speed_mbps\n");
     out.push_str(&format!(
-        "{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.3},{:.6},{},{},{},{},{},{},{},{},{}\n",
+        "{},{},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.3},{:.6},{:.3},{:.3},{:.3},{:.3},{:.6},{},{},{},{},{},{},{},{},{}\n",
         csv_escape(&result.timestamp_utc),
         csv_escape(&result.base_url),
         csv_escape(&result.meas_id),
+        csv_escape(result.comments.as_deref().unwrap_or("")),
         csv_escape(result.server.as_deref().unwrap_or("")),
         result.download.mbps,
         result.upload.mbps,

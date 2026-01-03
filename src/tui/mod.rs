@@ -28,6 +28,7 @@ struct UiState {
     paused: bool,
     phase: Phase,
     info: String,
+    comments: Option<String>,
 
     dl_series: Vec<u64>,
     ul_series: Vec<u64>,
@@ -92,6 +93,7 @@ impl Default for UiState {
             paused: false,
             phase: Phase::IdleLatency,
             info: String::new(),
+            comments: None,
             dl_series: Vec::new(),
             ul_series: Vec::new(),
             idle_lat_series: Vec::new(),
@@ -140,6 +142,52 @@ impl Default for UiState {
             link_speed_mbps: None,
             certificate_filename: None,
         }
+    }
+}
+
+fn push_wrapped_status_kv(
+    out: &mut Vec<Line<'static>>,
+    label: &str,
+    value: &str,
+    status_area_width: u16,
+) {
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+
+    // Account for borders (2 chars on each side)
+    let usable_width = status_area_width.saturating_sub(4).max(1);
+    let label_text = format!("{label}:");
+    let label_width = label_text.chars().count() as u16;
+
+    let value_chars: Vec<char> = value.chars().collect();
+    let mut remaining = value_chars.as_slice();
+    let mut first = true;
+
+    while !remaining.is_empty() {
+        let line_width = if first {
+            usable_width.saturating_sub(label_width + 1).max(1)
+        } else {
+            usable_width.saturating_sub(2).max(1)
+        };
+
+        let chars_to_take = (remaining.len() as u16).min(line_width) as usize;
+        let (line_chars, rest) = remaining.split_at(chars_to_take);
+        let line_text: String = line_chars.iter().collect();
+
+        if first {
+            out.push(Line::from(vec![
+                Span::styled(label_text.clone(), Style::default().fg(Color::Gray)),
+                Span::raw(" "),
+                Span::raw(line_text),
+            ]));
+            first = false;
+        } else {
+            out.push(Line::from(vec![Span::raw("  "), Span::raw(line_text)]));
+        }
+
+        remaining = rest;
     }
 }
 
@@ -250,6 +298,7 @@ pub async fn run(args: Cli) -> Result<()> {
     let mut state = UiState {
         phase: Phase::IdleLatency,
         auto_save: args.auto_save,
+        comments: args.comments.clone(),
         ..Default::default()
     };
     state.initial_history_load_size = initial_load;
@@ -1280,12 +1329,17 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         ),
     ])];
 
+    // Custom comments (wrapping to fit status area)
+    if let Some(comments) = state.comments.as_deref() {
+        push_wrapped_status_kv(&mut status_lines, "Comments", comments, main[3].width);
+    }
+
     // Info line - split into two lines if it contains a saved path, with wrapping
     if state.info.starts_with("Saved:") || state.info.starts_with("Saved (verifying):") {
         // Split into label and path
         if let Some(colon_pos) = state.info.find(':') {
             let (label, path) = state.info.split_at(colon_pos + 1);
-            let label_text = label.trim();
+            let label_text = label.trim().to_string();
             let path_str = path.trim();
 
             // Wrap the path to fit within available width
@@ -1313,7 +1367,7 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
                 if is_first_path_line {
                     // First line - include label and first part of path
                     status_lines.push(Line::from(vec![
-                        Span::styled(label_text, Style::default().fg(Color::Gray)),
+                        Span::styled(label_text.clone(), Style::default().fg(Color::Gray)),
                         Span::raw(" "),
                         Span::raw(line_text),
                     ]));
@@ -1328,13 +1382,13 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
         } else {
             status_lines.push(Line::from(vec![
                 Span::styled("Info: ", Style::default().fg(Color::Gray)),
-                Span::raw(&state.info),
+                Span::raw(state.info.clone()),
             ]));
         }
     } else {
         status_lines.push(Line::from(vec![
             Span::styled("Info: ", Style::default().fg(Color::Gray)),
-            Span::raw(&state.info),
+            Span::raw(state.info.clone()),
         ]));
     }
 

@@ -5,6 +5,8 @@ use std::time::Duration;
 pub struct RunConfig {
     pub base_url: String,
     pub meas_id: String,
+    #[serde(default)]
+    pub comments: Option<String>,
     pub download_bytes_per_req: u64,
     pub upload_bytes_per_req: u64,
     pub concurrency: usize,
@@ -99,6 +101,8 @@ pub struct RunResult {
     pub timestamp_utc: String,
     pub base_url: String,
     pub meas_id: String,
+    #[serde(default)]
+    pub comments: Option<String>,
     pub meta: Option<serde_json::Value>,
     #[serde(default)]
     pub server: Option<String>,
