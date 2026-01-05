@@ -33,6 +33,17 @@ pub enum Phase {
     Summary,
 }
 
+impl Phase {
+    /// Convert phase to query string value for latency probes during throughput tests
+    pub fn as_query_str(self) -> Option<&'static str> {
+        match self {
+            Phase::Download => Some("download"),
+            Phase::Upload => Some("upload"),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TestEvent {
     PhaseStarted {
@@ -69,6 +80,33 @@ pub struct LatencySummary {
     pub p75_ms: Option<f64>,
     pub max_ms: Option<f64>,
     pub jitter_ms: Option<f64>,
+}
+
+impl Default for LatencySummary {
+    fn default() -> Self {
+        Self {
+            sent: 0,
+            received: 0,
+            loss: 0.0,
+            min_ms: None,
+            mean_ms: None,
+            median_ms: None,
+            p25_ms: None,
+            p75_ms: None,
+            max_ms: None,
+            jitter_ms: None,
+        }
+    }
+}
+
+impl LatencySummary {
+    /// Create a LatencySummary representing a failed/empty measurement
+    pub fn failed() -> Self {
+        Self {
+            loss: 1.0,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

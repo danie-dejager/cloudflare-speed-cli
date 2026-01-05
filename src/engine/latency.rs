@@ -36,11 +36,7 @@ pub async fn run_latency_probes(
         }
 
         sent += 1;
-        let during_str = match during {
-            Some(Phase::Download) => Some("download"),
-            Some(Phase::Upload) => Some("upload"),
-            _ => None,
-        };
+        let during_str = during.and_then(|p| p.as_query_str());
 
         let r = client.probe_latency_ms(during_str, timeout_ms).await;
         match r {

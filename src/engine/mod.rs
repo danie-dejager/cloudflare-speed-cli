@@ -13,9 +13,10 @@ use std::sync::{
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // used by TUI control loop (M2+)
 pub enum EngineControl {
+    /// Pause (true) or resume (false) the running test
     Pause(bool),
+    /// Cancel the test entirely
     Cancel,
 }
 

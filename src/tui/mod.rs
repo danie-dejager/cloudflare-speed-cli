@@ -224,13 +224,7 @@ impl UiState {
                 sent,
                 received,
                 loss,
-                min_ms: None,
-                mean_ms: None,
-                median_ms: None,
-                p25_ms: None,
-                p75_ms: None,
-                max_ms: None,
-                jitter_ms: None,
+                ..Default::default()
             };
         }
 
@@ -243,11 +237,9 @@ impl UiState {
         let max_ms = Some(sorted[n - 1]);
 
         // Compute metrics using the same method as metrics.rs
-        if let Some((mean, median, p25, p75)) = crate::metrics::compute_metrics(samples.to_vec()) {
-            // Compute jitter (stddev) from samples
-            let variance =
-                samples.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / samples.len() as f64;
-            let jitter_ms = Some(variance.sqrt());
+        if let Some((mean, median, p25, p75)) = crate::metrics::compute_metrics(samples) {
+            // Use the shared jitter computation from metrics.rs
+            let jitter_ms = crate::metrics::compute_jitter(samples);
 
             crate::model::LatencySummary {
                 sent,
@@ -266,13 +258,7 @@ impl UiState {
                 sent,
                 received,
                 loss,
-                min_ms: None,
-                mean_ms: None,
-                median_ms: None,
-                p25_ms: None,
-                p75_ms: None,
-                max_ms: None,
-                jitter_ms: None,
+                ..Default::default()
             }
         }
     }
@@ -619,28 +605,11 @@ pub async fn run(args: Cli) -> Result<()> {
                                         save_and_show_path(&r, &mut state);
                                     }
                                     if let Some(meta) = r.meta.as_ref() {
-                                        // Try multiple possible field names for IP
-                                        state.ip = meta
-                                            .get("clientIp")
-                                            .or_else(|| meta.get("ip"))
-                                            .or_else(|| meta.get("clientIP"))
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
-                                        state.colo = meta
-                                            .get("colo")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
-                                        // Extract ASN and organization
-                                        state.asn = meta
-                                            .get("asn")
-                                            .and_then(|v| v.as_i64())
-                                            .map(|n| n.to_string())
-                                            .or_else(|| meta.get("asn").and_then(|v| v.as_str()).map(|s| s.to_string()));
-                                        state.as_org = meta
-                                            .get("asOrganization")
-                                            .or_else(|| meta.get("asnOrg"))
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
+                                        let extracted = crate::network::extract_metadata(meta);
+                                        state.ip = extracted.ip;
+                                        state.colo = extracted.colo;
+                                        state.asn = extracted.asn;
+                                        state.as_org = extracted.as_org;
                                     }
                                     // Server should be set from RunResult.server
                                     if r.server.is_some() {
@@ -753,31 +722,12 @@ fn apply_event(state: &mut UiState, ev: TestEvent) {
         }
         TestEvent::Info { message } => state.info = message,
         TestEvent::MetaInfo { meta } => {
-            // Extract IP and colo from meta
-            state.ip = meta
-                .get("clientIp")
-                .or_else(|| meta.get("ip"))
-                .or_else(|| meta.get("clientIP"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            state.colo = meta
-                .get("colo")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            // Extract ASN and organization
-            state.asn = meta.get("asn").and_then(|v| {
-                if let Some(n) = v.as_i64() {
-                    Some(n.to_string())
-                } else {
-                    v.as_str().map(|s| s.to_string())
-                }
-            });
-            state.as_org = meta
-                .get("asOrganization")
-                .or_else(|| meta.get("asnOrg"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            // Extract IP, colo, ASN, and org from meta
+            let extracted = crate::network::extract_metadata(&meta);
+            state.ip = extracted.ip;
+            state.colo = extracted.colo;
+            state.asn = extracted.asn;
+            state.as_org = extracted.as_org;
 
             // Extract city for server location (if available, use it directly)
             if let Some(city) = meta.get("city").and_then(|v| v.as_str()) {
@@ -964,7 +914,7 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
             .data(&state.dl_points);
 
         let dl_values: Vec<f64> = state.dl_points.iter().map(|(_, y)| *y).collect();
-        let dl_metrics = crate::metrics::compute_metrics(dl_values);
+        let dl_metrics = crate::metrics::compute_metrics(&dl_values);
         // Use the computed mean from metrics for the title to match what's shown below
         let dl_avg = dl_metrics
             .map(|(mean, _, _, _)| mean)
@@ -1028,7 +978,7 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
             .data(&state.ul_points);
 
         let ul_values: Vec<f64> = state.ul_points.iter().map(|(_, y)| *y).collect();
-        let ul_metrics = crate::metrics::compute_metrics(ul_values);
+        let ul_metrics = crate::metrics::compute_metrics(&ul_values);
         // Use the computed mean from metrics for the title to match what's shown below
         let ul_avg = ul_metrics
             .map(|(mean, _, _, _)| mean)
@@ -1091,9 +1041,10 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
     // Idle latency
     if state.idle_latency_samples.len() >= 2 {
         // Use the same median calculation as the metrics below
-        let median = crate::metrics::compute_metrics(state.idle_latency_samples.to_vec())
+        let median = crate::metrics::compute_metrics(&state.idle_latency_samples)
             .map(|(_, med, _, _)| med)
             .unwrap_or(f64::NAN);
+        let jitter = crate::metrics::compute_jitter(&state.idle_latency_samples);
         let title = Line::from(format!("Idle Latency ({:.0}ms)", median));
         charts::render_box_plot_with_metrics_inside(
             f,
@@ -1101,6 +1052,7 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
             &state.idle_latency_samples,
             title,
             None,
+            jitter,
         );
     } else {
         let empty = Paragraph::new("Waiting for data...")
@@ -1111,9 +1063,10 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
     // Download latency
     if state.loaded_dl_latency_samples.len() >= 2 {
         // Use the same median calculation as the metrics below
-        let median = crate::metrics::compute_metrics(state.loaded_dl_latency_samples.to_vec())
+        let median = crate::metrics::compute_metrics(&state.loaded_dl_latency_samples)
             .map(|(_, med, _, _)| med)
             .unwrap_or(f64::NAN);
+        let jitter = crate::metrics::compute_jitter(&state.loaded_dl_latency_samples);
         let title = Line::from(vec![
             Span::raw("Latency Download ("),
             Span::styled(
@@ -1128,6 +1081,7 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
             &state.loaded_dl_latency_samples,
             title,
             Some(Color::Green),
+            jitter,
         );
     } else {
         let empty = Paragraph::new("Waiting for data...").block(
@@ -1141,9 +1095,10 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
     // Upload latency
     if state.loaded_ul_latency_samples.len() >= 2 {
         // Use the same median calculation as the metrics below
-        let median = crate::metrics::compute_metrics(state.loaded_ul_latency_samples.to_vec())
+        let median = crate::metrics::compute_metrics(&state.loaded_ul_latency_samples)
             .map(|(_, med, _, _)| med)
             .unwrap_or(f64::NAN);
+        let jitter = crate::metrics::compute_jitter(&state.loaded_ul_latency_samples);
         let title = Line::from(vec![
             Span::raw("Latency Upload ("),
             Span::styled(format!("{:.0}ms", median), Style::default().fg(Color::Cyan)),
@@ -1155,6 +1110,7 @@ fn draw_dashboard(area: Rect, f: &mut ratatui::Frame, state: &UiState) {
             &state.loaded_ul_latency_samples,
             title,
             Some(Color::Cyan),
+            jitter,
         );
     } else {
         let empty = Paragraph::new("Waiting for data...").block(

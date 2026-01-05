@@ -1,6 +1,47 @@
 use crate::cli::Cli;
 use crate::model::RunResult;
+use serde_json::Value;
 use std::process::Command;
+
+/// Extracted metadata fields from Cloudflare response
+#[derive(Debug, Clone, Default)]
+pub struct ExtractedMetadata {
+    pub ip: Option<String>,
+    pub colo: Option<String>,
+    pub asn: Option<String>,
+    pub as_org: Option<String>,
+}
+
+/// Extract metadata fields (IP, colo, ASN, org) from Cloudflare JSON response.
+/// Handles multiple possible field names for compatibility.
+pub fn extract_metadata(meta: &Value) -> ExtractedMetadata {
+    let ip = ["clientIp", "ip", "clientIP"]
+        .iter()
+        .find_map(|key| meta.get(*key))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let colo = meta
+        .get("colo")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let asn = meta
+        .get("asn")
+        .and_then(|v| {
+            v.as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| v.as_str().map(|s| s.to_string()))
+        });
+
+    let as_org = ["asOrganization", "asnOrg"]
+        .iter()
+        .find_map(|key| meta.get(*key))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    ExtractedMetadata { ip, colo, asn, as_org }
+}
 
 /// Network information gathered from the system
 pub struct NetworkInfo {
@@ -168,35 +209,11 @@ pub fn enrich_result(result: &RunResult, network_info: &NetworkInfo) -> RunResul
 
     // Extract metadata from result.meta if available
     if let Some(meta) = result.meta.as_ref() {
-        // Try multiple possible field names for IP
-        enriched.ip = meta
-            .get("clientIp")
-            .or_else(|| meta.get("ip"))
-            .or_else(|| meta.get("clientIP"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        enriched.colo = meta
-            .get("colo")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        // Extract ASN and organization
-        enriched.asn = meta
-            .get("asn")
-            .and_then(|v| v.as_i64())
-            .map(|n| n.to_string())
-            .or_else(|| {
-                meta.get("asn")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            });
-
-        enriched.as_org = meta
-            .get("asOrganization")
-            .or_else(|| meta.get("asnOrg"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let extracted = extract_metadata(meta);
+        enriched.ip = extracted.ip;
+        enriched.colo = extracted.colo;
+        enriched.asn = extracted.asn;
+        enriched.as_org = extracted.as_org;
     }
 
     // Server should already be set from RunResult.server, but preserve it

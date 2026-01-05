@@ -14,23 +14,17 @@ use tokio::sync::mpsc;
 /// Chunk size for upload stream generation (64 KB)
 const UPLOAD_CHUNK_SIZE: u64 = 64 * 1024;
 
-fn throughput_summary(bytes: u64, duration: Duration, mbps_samples: Vec<f64>) -> ThroughputSummary {
+fn throughput_summary(bytes: u64, duration: Duration, mbps_samples: &[f64]) -> ThroughputSummary {
     // Compute metrics using the same method as metrics.rs for consistency
-    let (mean_mbps, median_mbps, p25_mbps, p75_mbps) = if mbps_samples.len() >= 2 {
-        crate::metrics::compute_metrics(mbps_samples.clone()).unwrap_or_else(|| {
-            // Fallback: calculate from bytes/duration if no samples
-            let secs = duration.as_secs_f64().max(1e-9);
-            let bps = (bytes as f64) / secs;
-            let mbps = (bps * 8.0) / 1_000_000.0;
-            (mbps, mbps, mbps, mbps)
-        })
-    } else {
-        // Fallback: calculate from bytes/duration if insufficient samples
+    let fallback_mbps = || {
         let secs = duration.as_secs_f64().max(1e-9);
         let bps = (bytes as f64) / secs;
         let mbps = (bps * 8.0) / 1_000_000.0;
         (mbps, mbps, mbps, mbps)
     };
+
+    let (mean_mbps, median_mbps, p25_mbps, p75_mbps) =
+        crate::metrics::compute_metrics(mbps_samples).unwrap_or_else(fallback_mbps);
 
     let mbps = mean_mbps;
 
@@ -123,18 +117,7 @@ pub async fn run_download_with_loaded_latency(
             cancel2,
         )
         .await
-        .unwrap_or(LatencySummary {
-            sent: 0,
-            received: 0,
-            loss: 1.0,
-            min_ms: None,
-            mean_ms: None,
-            median_ms: None,
-            p25_ms: None,
-            p75_ms: None,
-            max_ms: None,
-            jitter_ms: None,
-        });
+        .unwrap_or_else(|_| LatencySummary::failed());
         let _ = lat_tx.send(res).await;
     });
 
@@ -183,7 +166,7 @@ pub async fn run_download_with_loaded_latency(
     let bytes_total = total.load(Ordering::Relaxed);
     let (bytes, window) =
         estimate_steady_window(&samples, duration).unwrap_or((bytes_total, duration));
-    let dl = throughput_summary(bytes, window, mbps_samples);
+    let dl = throughput_summary(bytes, window, &mbps_samples);
 
     let loaded_latency = lat_rx
         .recv()
@@ -270,18 +253,7 @@ pub async fn run_upload_with_loaded_latency(
             cancel2,
         )
         .await
-        .unwrap_or(LatencySummary {
-            sent: 0,
-            received: 0,
-            loss: 1.0,
-            min_ms: None,
-            mean_ms: None,
-            median_ms: None,
-            p25_ms: None,
-            p75_ms: None,
-            max_ms: None,
-            jitter_ms: None,
-        });
+        .unwrap_or_else(|_| LatencySummary::failed());
         let _ = lat_tx.send(res).await;
     });
 
@@ -330,7 +302,7 @@ pub async fn run_upload_with_loaded_latency(
     let bytes_total = total.load(Ordering::Relaxed);
     let (bytes, window) =
         estimate_steady_window(&samples, duration).unwrap_or((bytes_total, duration));
-    let up = throughput_summary(bytes, window, mbps_samples);
+    let up = throughput_summary(bytes, window, &mbps_samples);
 
     let loaded_latency = lat_rx
         .recv()

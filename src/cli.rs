@@ -89,7 +89,7 @@ pub struct Cli {
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub test_on_launch: bool,
 
-    /// Attach custom comments to this run (saved/exported and shown in TUI status)
+    /// Attach custom comments to this run
     #[arg(long)]
     pub comments: Option<String>,
 }
@@ -145,10 +145,8 @@ pub fn build_config(args: &Cli) -> RunConfig {
 
 async fn run_json(args: Cli) -> Result<()> {
     let cfg = build_config(&args);
-    let (evt_tx, _evt_rx) = mpsc::channel::<TestEvent>(1024);
-    let (ctrl_tx, ctrl_rx) = mpsc::channel::<EngineControl>(16);
-    drop(ctrl_tx);
-    drop(_evt_rx); // Not used in JSON mode
+    let (evt_tx, _) = mpsc::channel::<TestEvent>(1024);
+    let (_, ctrl_rx) = mpsc::channel::<EngineControl>(16);
 
     let engine = TestEngine::new(cfg);
     let result = engine
@@ -174,8 +172,7 @@ async fn run_json(args: Cli) -> Result<()> {
 async fn run_text(args: Cli) -> Result<()> {
     let cfg = build_config(&args);
     let (evt_tx, mut evt_rx) = mpsc::channel::<TestEvent>(2048);
-    let (ctrl_tx, ctrl_rx) = mpsc::channel::<EngineControl>(16);
-    drop(ctrl_tx);
+    let (_, ctrl_rx) = mpsc::channel::<EngineControl>(16);
 
     let engine = TestEngine::new(cfg);
     let handle = tokio::spawn(async move { engine.run(evt_tx, ctrl_rx).await });
@@ -260,17 +257,11 @@ async fn run_text(args: Cli) -> Result<()> {
 
     handle_exports(&args, &enriched)?;
     if let Some(meta) = enriched.meta.as_ref() {
-        let ip = meta.get("clientIp").and_then(|v| v.as_str()).unwrap_or("-");
-        let colo = meta.get("colo").and_then(|v| v.as_str()).unwrap_or("-");
-        let asn = meta
-            .get("asn")
-            .and_then(|v| v.as_i64())
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "-".to_string());
-        let org = meta
-            .get("asOrganization")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
+        let extracted = crate::network::extract_metadata(meta);
+        let ip = extracted.ip.as_deref().unwrap_or("-");
+        let colo = extracted.colo.as_deref().unwrap_or("-");
+        let asn = extracted.asn.as_deref().unwrap_or("-");
+        let org = extracted.as_org.as_deref().unwrap_or("-");
         println!("IP/Colo/ASN: {ip} / {colo} / {asn} ({org})");
     }
     if let Some(server) = enriched.server.as_deref() {
@@ -284,7 +275,7 @@ async fn run_text(args: Cli) -> Result<()> {
 
     // Compute and display throughput metrics (mean, median, p25, p75)
     let dl_values: Vec<f64> = dl_points.iter().map(|(_, y)| *y).collect();
-    let (dl_mean, dl_median, dl_p25, dl_p75) = crate::metrics::compute_metrics(dl_values)
+    let (dl_mean, dl_median, dl_p25, dl_p75) = crate::metrics::compute_metrics(&dl_values)
         .context("insufficient download throughput data to compute metrics")?;
     println!(
         "Download: avg {:.2} med {:.2} p25 {:.2} p75 {:.2}",
@@ -292,7 +283,7 @@ async fn run_text(args: Cli) -> Result<()> {
     );
 
     let ul_values: Vec<f64> = ul_points.iter().map(|(_, y)| *y).collect();
-    let (ul_mean, ul_median, ul_p25, ul_p75) = crate::metrics::compute_metrics(ul_values)
+    let (ul_mean, ul_median, ul_p25, ul_p75) = crate::metrics::compute_metrics(&ul_values)
         .context("insufficient upload throughput data to compute metrics")?;
     println!(
         "Upload:   avg {:.2} med {:.2} p25 {:.2} p75 {:.2}",
@@ -301,7 +292,7 @@ async fn run_text(args: Cli) -> Result<()> {
 
     // Compute and display latency metrics (mean, median, p25, p75)
     let (idle_mean, idle_median, idle_p25, idle_p75) =
-        crate::metrics::compute_metrics(idle_latency_samples.to_vec())
+        crate::metrics::compute_metrics(&idle_latency_samples)
             .context("insufficient idle latency data to compute metrics")?;
     println!(
         "Idle latency: avg {:.1} med {:.1} p25 {:.1} p75 {:.1} ms (loss {:.1}%, jitter {:.1} ms)",
@@ -314,7 +305,7 @@ async fn run_text(args: Cli) -> Result<()> {
     );
 
     let (dl_lat_mean, dl_lat_median, dl_lat_p25, dl_lat_p75) =
-        crate::metrics::compute_metrics(loaded_dl_latency_samples.to_vec())
+        crate::metrics::compute_metrics(&loaded_dl_latency_samples)
             .context("insufficient loaded download latency data to compute metrics")?;
     println!(
         "Loaded latency (download): avg {:.1} med {:.1} p25 {:.1} p75 {:.1} ms (loss {:.1}%, jitter {:.1} ms)",
@@ -327,7 +318,7 @@ async fn run_text(args: Cli) -> Result<()> {
     );
 
     let (ul_lat_mean, ul_lat_median, ul_lat_p25, ul_lat_p75) =
-        crate::metrics::compute_metrics(loaded_ul_latency_samples.to_vec())
+        crate::metrics::compute_metrics(&loaded_ul_latency_samples)
             .context("insufficient loaded upload latency data to compute metrics")?;
     println!(
         "Loaded latency (upload): avg {:.1} med {:.1} p25 {:.1} p75 {:.1} ms (loss {:.1}%, jitter {:.1} ms)",

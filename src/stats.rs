@@ -42,13 +42,8 @@ pub fn latency_summary_from_samples(
             sent,
             received,
             loss,
-            min_ms: None,
-            mean_ms: None,
-            median_ms: None,
-            p25_ms: None,
-            p75_ms: None,
-            max_ms: None,
             jitter_ms,
+            ..Default::default()
         };
     }
 
@@ -61,13 +56,9 @@ pub fn latency_summary_from_samples(
     let max_ms = Some(sorted[n - 1]);
 
     // Compute metrics using the same method as metrics.rs
-    if let Some((mean, median, p25, p75)) = crate::metrics::compute_metrics(samples_ms.to_vec()) {
-        // Compute jitter (stddev) if not provided
-        let jitter = jitter_ms.unwrap_or_else(|| {
-            let variance = samples_ms.iter().map(|&x| (x - mean).powi(2)).sum::<f64>()
-                / samples_ms.len() as f64;
-            variance.sqrt()
-        });
+    if let Some((mean, median, p25, p75)) = crate::metrics::compute_metrics(samples_ms) {
+        // Use provided jitter or compute from samples using shared function
+        let jitter = jitter_ms.or_else(|| crate::metrics::compute_jitter(samples_ms));
 
         LatencySummary {
             sent,
@@ -79,20 +70,15 @@ pub fn latency_summary_from_samples(
             p25_ms: Some(p25),
             p75_ms: Some(p75),
             max_ms,
-            jitter_ms: Some(jitter),
+            jitter_ms: jitter,
         }
     } else {
         LatencySummary {
             sent,
             received,
             loss,
-            min_ms: None,
-            mean_ms: None,
-            median_ms: None,
-            p25_ms: None,
-            p75_ms: None,
-            max_ms: None,
             jitter_ms,
+            ..Default::default()
         }
     }
 }

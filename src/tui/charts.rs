@@ -33,6 +33,7 @@ pub fn render_box_plot_with_metrics_inside(
     samples: &[f64],
     title: Line,
     color: Option<Color>,
+    jitter: Option<f64>,
 ) {
     // Get inner area (accounting for borders)
     let inner = if area.width > 2 && area.height > 2 {
@@ -99,8 +100,8 @@ pub fn render_box_plot_with_metrics_inside(
         f.render_widget(canvas, chart_metrics[0]);
 
         // Render metrics in bottom area
-        if let Some(metrics) = crate::metrics::compute_metrics(samples.to_vec()) {
-            let metrics_text = render_metrics_text(metrics, color);
+        if let Some(metrics) = crate::metrics::compute_metrics(samples) {
+            let metrics_text = render_metrics_text(metrics, jitter, color);
             f.render_widget(
                 Paragraph::new(metrics_text).alignment(Alignment::Center),
                 chart_metrics[1],
@@ -116,11 +117,15 @@ pub fn render_box_plot_with_metrics_inside(
     f.render_widget(block, area);
 }
 
-/// Helper function to render metrics text (avg, med, p25, p75)
-fn render_metrics_text<'a>(metrics: (f64, f64, f64, f64), color: Option<Color>) -> Line<'a> {
+/// Helper function to render metrics text (avg, med, p25, p75, and optionally jitter)
+fn render_metrics_text<'a>(
+    metrics: (f64, f64, f64, f64),
+    jitter: Option<f64>,
+    color: Option<Color>,
+) -> Line<'a> {
     let (mean_val, median_val, p25_val, p75_val) = metrics;
     if let Some(c) = color {
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled("avg", Style::default().fg(Color::Gray)),
             Span::styled(format!(" {:.0}", mean_val), Style::default().fg(c)),
             Span::raw(" "),
@@ -132,7 +137,18 @@ fn render_metrics_text<'a>(metrics: (f64, f64, f64, f64), color: Option<Color>) 
             Span::raw(" "),
             Span::styled("p75", Style::default().fg(Color::Gray)),
             Span::styled(format!(" {:.0}", p75_val), Style::default().fg(c)),
-        ])
+        ];
+        if let Some(j) = jitter {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("jit", Style::default().fg(Color::Gray)));
+            spans.push(Span::styled(format!(" {:.1}", j), Style::default().fg(c)));
+        }
+        Line::from(spans)
+    } else if let Some(j) = jitter {
+        Line::from(format!(
+            "avg {:.0} med {:.0} p25 {:.0} p75 {:.0} jit {:.1}",
+            mean_val, median_val, p25_val, p75_val, j
+        ))
     } else {
         Line::from(format!(
             "avg {:.0} med {:.0} p25 {:.0} p75 {:.0}",
@@ -174,9 +190,9 @@ pub fn render_chart_with_metrics_inside(
     let chart_without_borders = Chart::new(datasets).x_axis(x_axis).y_axis(y_axis);
     f.render_widget(chart_without_borders, chart_metrics[0]);
 
-    // Render metrics in bottom area
+    // Render metrics in bottom area (no jitter for throughput charts)
     if let Some(metrics) = metrics {
-        let metrics_text = render_metrics_text(metrics, Some(color));
+        let metrics_text = render_metrics_text(metrics, None, Some(color));
         f.render_widget(
             Paragraph::new(metrics_text).alignment(Alignment::Center),
             chart_metrics[1],
