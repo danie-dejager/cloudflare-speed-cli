@@ -107,6 +107,7 @@ fn gather_default_network_info() -> (
 }
 
 /// Get the default network interface name
+#[cfg(not(windows))]
 fn get_default_interface() -> Option<String> {
     // Try to get interface from default route
     if let Ok(output) = Command::new("ip")
@@ -142,14 +143,66 @@ fn get_default_interface() -> Option<String> {
     None
 }
 
+#[cfg(windows)]
+fn get_default_interface() -> Option<String> {
+    let output = Command::new("powershell")
+        .args(&[
+            "-Command",
+            "Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object RouteMetric | Select-Object -First 1 -ExpandProperty InterfaceAlias",
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+
+    // Fallback: Get any active adapter
+    let output = Command::new("powershell")
+        .args(&[
+            "-Command",
+            "Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1 -ExpandProperty Name",
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+
+    None
+}
+
 /// Check if interface is wireless
+#[cfg(not(windows))]
 fn check_if_wireless(iface: &str) -> Option<bool> {
     // Check if /sys/class/net/<iface>/wireless exists
     let wireless_path = format!("/sys/class/net/{}/wireless", iface);
     Some(std::path::Path::new(&wireless_path).exists())
 }
 
+#[cfg(windows)]
+fn check_if_wireless(iface: &str) -> Option<bool> {
+    let output = Command::new("netsh")
+        .args(&["wlan", "show", "interfaces"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        return Some(output_str.contains(iface));
+    }
+    Some(false)
+}
+
 /// Get wireless SSID for an interface
+#[cfg(not(windows))]
 fn get_wireless_ssid(iface: &str) -> Option<String> {
     // Try iwgetid first (most reliable)
     if let Ok(output) = Command::new("iwgetid").arg("-r").arg(iface).output() {
@@ -178,7 +231,38 @@ fn get_wireless_ssid(iface: &str) -> Option<String> {
     None
 }
 
+#[cfg(windows)]
+fn get_wireless_ssid(iface: &str) -> Option<String> {
+    let output = Command::new("netsh")
+        .args(&["wlan", "show", "interfaces"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let mut current_iface = String::new();
+        for line in output_str.lines() {
+            let line = line.trim();
+            if line.starts_with("Name") || line.starts_with("Name") {
+                if let Some(name) = line.split(':').nth(1) {
+                    current_iface = name.trim().to_string();
+                }
+            }
+            if current_iface == iface && (line.starts_with("SSID") || line.starts_with("SSID")) {
+                if let Some(ssid) = line.split(':').nth(1) {
+                    let ssid = ssid.trim().to_string();
+                    if !ssid.is_empty() {
+                        return Some(ssid);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Get MAC address of interface
+#[cfg(not(windows))]
 fn get_interface_mac(iface: &str) -> Option<String> {
     let mac_path = format!("/sys/class/net/{}/address", iface);
     std::fs::read_to_string(mac_path)
@@ -187,13 +271,53 @@ fn get_interface_mac(iface: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+#[cfg(windows)]
+fn get_interface_mac(iface: &str) -> Option<String> {
+    let output = Command::new("powershell")
+        .args(&[
+            "-Command",
+            &format!("(Get-NetAdapter -Name '{}').LinkLayerAddress", iface),
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let mac = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !mac.is_empty() {
+            return Some(mac.replace('-', ":"));
+        }
+    }
+    None
+}
+
 /// Get link speed in Mbps
+#[cfg(not(windows))]
 fn get_interface_speed(iface: &str) -> Option<u64> {
     let speed_path = format!("/sys/class/net/{}/speed", iface);
     std::fs::read_to_string(speed_path)
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .filter(|&speed| speed > 0 && speed < 1_000_000) // Sanity check
+}
+
+#[cfg(windows)]
+fn get_interface_speed(iface: &str) -> Option<u64> {
+    let output = Command::new("powershell")
+        .args(&[
+            "-Command",
+            &format!("(Get-NetAdapter -Name '{}').Speed / 1000000", iface),
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let speed_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // Speed might be returned as a float (e.g., 2882.4), we want u64 Mbps
+        if let Ok(speed_float) = speed_str.replace(',', ".").parse::<f64>() {
+            return Some(speed_float as u64);
+        }
+    }
+    None
 }
 
 /// Enrich RunResult with network information and metadata
