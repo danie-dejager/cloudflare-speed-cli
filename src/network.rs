@@ -147,6 +147,7 @@ fn get_default_interface() -> Option<String> {
 fn get_default_interface() -> Option<String> {
     let output = Command::new("powershell")
         .args(&[
+            "-NoProfile",
             "-Command",
             "Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object RouteMetric | Select-Object -First 1 -ExpandProperty InterfaceAlias",
         ])
@@ -163,8 +164,9 @@ fn get_default_interface() -> Option<String> {
     // Fallback: Get any active adapter
     let output = Command::new("powershell")
         .args(&[
+            "-NoProfile",
             "-Command",
-            "Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1 -ExpandProperty Name",
+            "Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1 -ExpandProperty InterfaceAlias",
         ])
         .output()
         .ok()?;
@@ -243,12 +245,12 @@ fn get_wireless_ssid(iface: &str) -> Option<String> {
         let mut current_iface = String::new();
         for line in output_str.lines() {
             let line = line.trim();
-            if line.starts_with("Name") || line.starts_with("Name") {
+            if line.starts_with("Name") {
                 if let Some(name) = line.split(':').nth(1) {
                     current_iface = name.trim().to_string();
                 }
             }
-            if current_iface == iface && (line.starts_with("SSID") || line.starts_with("SSID")) {
+            if current_iface == iface && line.starts_with("SSID") {
                 if let Some(ssid) = line.split(':').nth(1) {
                     let ssid = ssid.trim().to_string();
                     if !ssid.is_empty() {
@@ -275,6 +277,7 @@ fn get_interface_mac(iface: &str) -> Option<String> {
 fn get_interface_mac(iface: &str) -> Option<String> {
     let output = Command::new("powershell")
         .args(&[
+            "-NoProfile",
             "-Command",
             &format!("(Get-NetAdapter -Name '{}').LinkLayerAddress", iface),
         ])
@@ -304,17 +307,20 @@ fn get_interface_speed(iface: &str) -> Option<u64> {
 fn get_interface_speed(iface: &str) -> Option<u64> {
     let output = Command::new("powershell")
         .args(&[
+            "-NoProfile",
             "-Command",
-            &format!("(Get-NetAdapter -Name '{}').Speed / 1000000", iface),
+            &format!(
+                "([int](([double](Get-NetAdapter -Name '{}').Speed) / 1000000))",
+                iface
+            ),
         ])
         .output()
         .ok()?;
 
     if output.status.success() {
         let speed_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        // Speed might be returned as a float (e.g., 2882.4), we want u64 Mbps
-        if let Ok(speed_float) = speed_str.replace(',', ".").parse::<f64>() {
-            return Some(speed_float as u64);
+        if let Ok(speed) = speed_str.parse::<u64>() {
+            return Some(speed);
         }
     }
     None
