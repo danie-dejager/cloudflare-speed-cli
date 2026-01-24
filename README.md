@@ -27,6 +27,15 @@ My preferred way if you have cargo installed:
 cargo install --git https://github.com/kavehtehrani/cloudflare-speed-cli --features tui
 ```
 
+### Homebrew
+
+This works for both older Intel and newer Silicon Mac computers.
+
+```bash
+brew tap kavehtehrani/tap
+brew install cloudflare-speed-cli
+```
+
 ### Installation Script
 
 For the lazy:
