@@ -2,6 +2,8 @@
   <img alt="cloudflare-speed-cli" src="images/banner.svg">
 </a>
 
+# cloudflare-speed-cli
+
 [![Rust](https://img.shields.io/badge/rust-1.81+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
