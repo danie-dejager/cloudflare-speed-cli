@@ -90,8 +90,7 @@ docker run --rm -it ghcr.io/kavehtehrani/cloudflare-speed-cli
 ```
 
 If you also want the history of runs to persist, then you have to mount a volume, e.g.
-`docker run --rm -it -v cloudflare-speed-data:/root/.local/share/cloudflare-speed-cli        
-  cloudflare-speed-cli`
+`docker run --rm -it -v cloudflare-speed-data:/root/.local/share/cloudflare-speed-cli ghcr.io/kavehtehrani/cloudflare-speed-cli`
 
 ## Usage
 
