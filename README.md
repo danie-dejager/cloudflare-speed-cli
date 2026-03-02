@@ -80,6 +80,19 @@ Download the static binary for your system from the
 
 _Note: I have checked the binaries on Linux (x64 and ARM64) and on Windows 11 but I do not have an Apple device. If there is any issue please do let me know!_
 
+### Docker
+
+If you have docker installed you can run the speedtest by pulling in the image:
+
+```bash
+docker pull ghcr.io/kavehtehrani/cloudflare-speed-cli:latest
+docker run --rm -it ghcr.io/kavehtehrani/cloudflare-speed-cli
+```
+
+If you also want the history of runs to persist, then you have to mount a volume, e.g.
+`docker run --rm -it -v cloudflare-speed-data:/root/.local/share/cloudflare-speed-cli        
+  cloudflare-speed-cli`
+
 ## Usage
 
 Run with the TUI (default):
