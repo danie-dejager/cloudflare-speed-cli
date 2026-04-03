@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::time::Duration;
 
 mod loss_percent_serde {
@@ -41,6 +42,8 @@ pub struct RunConfig {
     pub experimental: bool,
     pub interface: Option<String>,
     pub source_ip: Option<String>,
+    #[serde(skip)]
+    pub resolved_bind_ip: Option<IpAddr>,
     pub proxy: Option<String>,
     pub certificate_path: Option<std::path::PathBuf>,
     // Diagnostic options

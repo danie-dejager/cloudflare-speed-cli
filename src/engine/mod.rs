@@ -2,7 +2,7 @@ mod cloudflare;
 pub mod dns;
 pub mod ip_comparison;
 mod latency;
-mod network_bind;
+pub mod network_bind;
 mod throughput;
 pub mod tls;
 pub mod traceroute;
@@ -207,7 +207,7 @@ impl TestEngine {
 
         // Fetch external IPs (runs in parallel, part of default diagnostics)
         if self.cfg.measure_dns {
-            let (v4, v6) = dns::fetch_external_ips(&self.cfg.base_url).await;
+            let (v4, v6) = dns::fetch_external_ips(&self.cfg.base_url, self.cfg.resolved_bind_ip).await;
             external_ipv4 = v4.clone();
             external_ipv6 = v6.clone();
             event_tx
@@ -225,7 +225,7 @@ impl TestEngine {
                 .await
                 .ok();
 
-            match ip_comparison::compare_ip_versions(&self.cfg.base_url, &self.cfg.user_agent).await
+            match ip_comparison::compare_ip_versions(&self.cfg.base_url, &self.cfg.user_agent, self.cfg.resolved_bind_ip).await
             {
                 Ok(comparison) => {
                     event_tx

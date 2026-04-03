@@ -58,9 +58,15 @@ pub struct NetworkInfo {
 
 /// Gather network interface information based on CLI arguments
 pub fn gather_network_info(args: &Cli) -> NetworkInfo {
+    // Determine the interface: explicit --interface, reverse-lookup from --source, or auto-detect
+    let resolved_iface = args.interface.clone().or_else(|| {
+        args.source.as_ref().and_then(|ip| {
+            crate::engine::network_bind::get_interface_for_ip(ip)
+        })
+    });
+
     let (interface_name, network_name, is_wireless, interface_mac) =
-        if let Some(ref iface) = args.interface {
-            // Use the specified interface
+        if let Some(ref iface) = resolved_iface {
             let is_wireless = check_if_wireless(iface);
             let network_name = if is_wireless.unwrap_or(false) {
                 get_wireless_ssid(iface)

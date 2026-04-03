@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use reqwest::ClientBuilder;
 use std::net::{IpAddr, SocketAddr};
 
 /// Get the IP address of a network interface using the `if-addrs` crate
@@ -48,4 +49,132 @@ pub fn resolve_bind_address(
     }
 
     Ok(None)
+}
+
+/// Apply local address binding to a reqwest client builder.
+/// If `bind_ip` is Some, binds the client to that local address.
+pub fn apply_local_address(builder: ClientBuilder, bind_ip: Option<IpAddr>) -> ClientBuilder {
+    match bind_ip {
+        Some(ip) => builder.local_address(ip),
+        None => builder,
+    }
+}
+
+/// Reverse-lookup: find the interface name that owns a given IP address.
+pub fn get_interface_for_ip(ip_str: &str) -> Option<String> {
+    let target_ip: IpAddr = ip_str.parse().ok()?;
+    let addrs = if_addrs::get_if_addrs().ok()?;
+
+    for addr in &addrs {
+        let iface_ip = match &addr.addr {
+            if_addrs::IfAddr::V4(v4) => IpAddr::V4(v4.ip),
+            if_addrs::IfAddr::V6(v6) => IpAddr::V6(v6.ip),
+        };
+        if iface_ip == target_ip {
+            return Some(addr.name.clone());
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_interface_for_ip_loopback() {
+        // 127.0.0.1 is always bound to "lo" on Linux
+        let iface = get_interface_for_ip("127.0.0.1");
+        assert_eq!(iface, Some("lo".to_string()));
+    }
+
+    #[test]
+    fn test_get_interface_for_ip_not_found() {
+        // No interface should own this arbitrary IP
+        let iface = get_interface_for_ip("198.51.100.99");
+        assert_eq!(iface, None);
+    }
+
+    #[test]
+    fn test_get_interface_for_ip_invalid() {
+        let iface = get_interface_for_ip("not-an-ip");
+        assert_eq!(iface, None);
+    }
+
+    #[test]
+    fn test_get_interface_ip_loopback() {
+        let ip = get_interface_ip("lo").unwrap();
+        assert_eq!(ip, "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_get_interface_ip_nonexistent() {
+        let result = get_interface_ip("nonexistent_iface_xyz");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_roundtrip_interface_to_ip_and_back() {
+        // Get the IP for loopback, then reverse-lookup should return "lo"
+        let ip = get_interface_ip("lo").unwrap();
+        let iface = get_interface_for_ip(&ip.to_string());
+        assert_eq!(iface, Some("lo".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_bind_address_none() {
+        let result = resolve_bind_address(None, None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_bind_address_source_ip() {
+        let source = "127.0.0.1".to_string();
+        let result = resolve_bind_address(None, Some(&source)).unwrap();
+        let addr = result.unwrap();
+        assert_eq!(addr.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_bind_address_invalid_source() {
+        let source = "not-an-ip".to_string();
+        let result = resolve_bind_address(None, Some(&source));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_bind_address_interface() {
+        let iface = "lo".to_string();
+        let result = resolve_bind_address(Some(&iface), None).unwrap();
+        let addr = result.unwrap();
+        assert_eq!(addr.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_bind_address_source_takes_priority() {
+        // When both are provided, source_ip wins
+        let iface = "lo".to_string();
+        let source = "192.168.1.1".to_string();
+        let result = resolve_bind_address(Some(&iface), Some(&source)).unwrap();
+        let addr = result.unwrap();
+        assert_eq!(addr.ip(), "192.168.1.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_apply_local_address_none() {
+        // Should build successfully without binding
+        let builder = reqwest::Client::builder();
+        let client = apply_local_address(builder, None).build();
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_apply_local_address_some() {
+        // Should build successfully with binding
+        let builder = reqwest::Client::builder();
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        let client = apply_local_address(builder, Some(ip)).build();
+        assert!(client.is_ok());
+    }
 }

@@ -178,10 +178,28 @@ fn gen_meas_id() -> String {
 }
 
 /// Build a `RunConfig` from CLI arguments.
-pub fn build_config(args: &Cli) -> RunConfig {
+pub fn build_config(args: &Cli) -> Result<RunConfig> {
+    use crate::engine::network_bind;
+
     // DNS and TLS run by default unless --skip-diagnostics is set
     let skip = args.skip_diagnostics;
-    RunConfig {
+
+    // Resolve bind address once from --interface or --source
+    let resolved_bind_ip = network_bind::resolve_bind_address(
+        args.interface.as_ref(),
+        args.source.as_ref(),
+    )?
+    .map(|addr| addr.ip());
+
+    if let Some(ip) = resolved_bind_ip {
+        if let Some(ref iface) = args.interface {
+            eprintln!("Binding HTTP connections to interface {} (IP: {})", iface, ip);
+        } else {
+            eprintln!("Binding HTTP connections to source IP: {}", ip);
+        }
+    }
+
+    Ok(RunConfig {
         base_url: args.base_url.clone(),
         meas_id: gen_meas_id(),
         comments: args.comments.clone(),
@@ -197,6 +215,7 @@ pub fn build_config(args: &Cli) -> RunConfig {
         experimental: args.experimental,
         interface: args.interface.clone(),
         source_ip: args.source.clone(),
+        resolved_bind_ip,
         proxy: args.proxy.clone(),
         certificate_path: args.certificate.clone(),
         // Diagnostic options: DNS and TLS run by default unless --skip-diagnostics
@@ -208,13 +227,13 @@ pub fn build_config(args: &Cli) -> RunConfig {
         ipv4_only: args.ipv4_only,
         ipv6_only: args.ipv6_only,
         udp_packets: args.udp_packets,
-    }
+    })
 }
 
 /// Common function to run the test engine and process results.
 /// `silent` controls whether to consume events and suppress output.
 async fn run_test_engine(args: Cli, silent: bool) -> Result<()> {
-    let cfg = build_config(&args);
+    let cfg = build_config(&args)?;
     let network_info = crate::network::gather_network_info(&args);
     let enriched = if silent {
         // In silent mode, spawn task and consume events
@@ -272,7 +291,7 @@ async fn run_test_engine(args: Cli, silent: bool) -> Result<()> {
 }
 
 async fn run_text(args: Cli) -> Result<()> {
-    let cfg = build_config(&args);
+    let cfg = build_config(&args)?;
     let (evt_tx, mut evt_rx) = mpsc::channel::<TestEvent>(2048);
     let (_, ctrl_rx) = mpsc::channel::<EngineControl>(16);
 

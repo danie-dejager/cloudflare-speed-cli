@@ -644,7 +644,7 @@ struct RunCtx {
 }
 
 async fn start_run(args: &Cli) -> Result<RunCtx> {
-    let cfg = build_config(args);
+    let cfg = build_config(args)?;
     let (event_tx, event_rx) = mpsc::channel::<TestEvent>(4096);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<EngineControl>(32);
     let engine = TestEngine::new(cfg);

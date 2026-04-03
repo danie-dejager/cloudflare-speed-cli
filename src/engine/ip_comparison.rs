@@ -16,7 +16,11 @@ const TEST_DURATION: Duration = Duration::from_secs(3);
 ///
 /// Resolves the hostname to both IPv4 and IPv6 addresses, then runs
 /// abbreviated speed tests on each protocol.
-pub async fn compare_ip_versions(base_url: &str, user_agent: &str) -> Result<IpVersionComparison> {
+pub async fn compare_ip_versions(
+    base_url: &str,
+    user_agent: &str,
+    bind_ip: Option<IpAddr>,
+) -> Result<IpVersionComparison> {
     let url = Url::parse(base_url)?;
     let hostname = url
         .host_str()
@@ -43,7 +47,7 @@ pub async fn compare_ip_versions(base_url: &str, user_agent: &str) -> Result<IpV
 
     // Test IPv4
     let ipv4_result = if let Some(ip) = ipv4_addr {
-        Some(test_ip_version(base_url, hostname, port, ip, user_agent).await)
+        Some(test_ip_version(base_url, hostname, port, ip, user_agent, bind_ip).await)
     } else {
         Some(IpVersionResult {
             ip_address: "N/A".to_string(),
@@ -57,7 +61,7 @@ pub async fn compare_ip_versions(base_url: &str, user_agent: &str) -> Result<IpV
 
     // Test IPv6
     let ipv6_result = if let Some(ip) = ipv6_addr {
-        Some(test_ip_version(base_url, hostname, port, ip, user_agent).await)
+        Some(test_ip_version(base_url, hostname, port, ip, user_agent, bind_ip).await)
     } else {
         Some(IpVersionResult {
             ip_address: "N/A".to_string(),
@@ -82,16 +86,18 @@ async fn test_ip_version(
     port: u16,
     ip: IpAddr,
     user_agent: &str,
+    bind_ip: Option<IpAddr>,
 ) -> IpVersionResult {
+    use super::network_bind;
+
     let socket_addr = SocketAddr::new(ip, port);
 
     // Build a client that resolves hostname to specific IP
-    let client = match reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(user_agent)
         .timeout(Duration::from_secs(30))
-        .resolve(hostname, socket_addr)
-        .build()
-    {
+        .resolve(hostname, socket_addr);
+    let client = match network_bind::apply_local_address(builder, bind_ip).build() {
         Ok(c) => c,
         Err(e) => {
             return IpVersionResult {

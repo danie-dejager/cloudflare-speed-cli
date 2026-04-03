@@ -21,47 +21,15 @@ impl CloudflareClient {
             "https://speed.cloudflare.com/".parse().unwrap(),
         );
 
+        use super::network_bind;
+
         let mut builder = reqwest::Client::builder()
             .user_agent(cfg.user_agent.clone())
             .default_headers(default_headers)
             .timeout(Duration::from_secs(30))
             .tcp_keepalive(Duration::from_secs(15));
 
-        // Configure binding to interface or source IP if specified
-        if let Some(ref iface) = cfg.interface {
-            use crate::engine::network_bind;
-            match network_bind::get_interface_ip(iface) {
-                Ok(ip) => {
-                    builder = builder.local_address(ip);
-                    eprintln!(
-                        "Binding HTTP connections to interface {} (IP: {})",
-                        iface, ip
-                    );
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to get IP address for interface {}: {}",
-                        iface,
-                        e
-                    ));
-                }
-            }
-        } else if let Some(ref source_ip) = cfg.source_ip {
-            // Bind to specific source IP address
-            match source_ip.parse::<std::net::IpAddr>() {
-                Ok(ip) => {
-                    builder = builder.local_address(ip);
-                    eprintln!("Binding HTTP connections to source IP: {}", ip);
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Invalid source IP address format '{}': {}",
-                        source_ip,
-                        e
-                    ));
-                }
-            }
-        }
+        builder = network_bind::apply_local_address(builder, cfg.resolved_bind_ip);
 
         // Load custom certificate if provided
         if let Some(ref cert_path) = cfg.certificate_path {

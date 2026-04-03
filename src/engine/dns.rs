@@ -208,7 +208,10 @@ pub fn extract_hostname(url: &str) -> Option<String> {
 
 /// Fetch external IPv4 and IPv6 addresses by making requests to Cloudflare.
 /// Returns (ipv4, ipv6) - either may be None if not available.
-pub async fn fetch_external_ips(base_url: &str) -> (Option<String>, Option<String>) {
+pub async fn fetch_external_ips(
+    base_url: &str,
+    bind_ip: Option<std::net::IpAddr>,
+) -> (Option<String>, Option<String>) {
     let hostname = match extract_hostname(base_url) {
         Some(h) => h,
         None => return (None, None),
@@ -218,8 +221,8 @@ pub async fn fetch_external_ips(base_url: &str) -> (Option<String>, Option<Strin
     let url = format!("{}/__down?bytes=0", base_url);
 
     let (ipv4, ipv6) = tokio::join!(
-        fetch_external_ip_version(&url, &hostname, IpVersion::V4),
-        fetch_external_ip_version(&url, &hostname, IpVersion::V6)
+        fetch_external_ip_version(&url, &hostname, IpVersion::V4, bind_ip),
+        fetch_external_ip_version(&url, &hostname, IpVersion::V6, bind_ip)
     );
 
     (ipv4, ipv6)
@@ -235,7 +238,9 @@ async fn fetch_external_ip_version(
     url: &str,
     hostname: &str,
     version: IpVersion,
+    bind_ip: Option<std::net::IpAddr>,
 ) -> Option<String> {
+    use super::network_bind;
     use std::net::SocketAddr;
     use std::time::Duration;
 
@@ -253,9 +258,10 @@ async fn fetch_external_ip_version(
     })?;
 
     // Build client that resolves to the specific IP
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .resolve(hostname, target_addr)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(5));
+    let client = network_bind::apply_local_address(builder, bind_ip)
         .build()
         .ok()?;
 
