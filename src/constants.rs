@@ -32,6 +32,20 @@ pub const UDP_PROBE_TIMEOUT: Duration = Duration::from_millis(600);
 /// Delay between UDP loss probes.
 pub const UDP_PROBE_INTERVAL: Duration = Duration::from_millis(80);
 
+/// STUN server the UDP loss probe sends binding requests to. This is
+/// Cloudflare's dedicated STUN endpoint rather than its TURN relay
+/// (turn.cloudflare.com): firewalls that block TURN relays, common on
+/// corporate and coworking networks, usually still pass plain STUN, and the
+/// probe only needs binding responses.
+pub const UDP_PROBE_STUN_HOST: &str = "stun.cloudflare.com";
+
+/// Standard STUN port (RFC 5389), also the default for `stun:` URLs without one.
+pub const STUN_PORT: u16 = 3478;
+
+/// Unanswered UDP probes, with no response received at all, after which the
+/// probe stops and reports the target as unreachable instead of 100% loss.
+pub const UDP_PROBE_UNREACHABLE_AFTER: u64 = 10;
+
 /// Latency probes per family in the IPv4-vs-IPv6 comparison (median reported).
 pub const IP_COMPARISON_LATENCY_PROBES: usize = 5;
 

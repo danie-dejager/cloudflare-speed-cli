@@ -322,7 +322,7 @@ pub fn draw_dashboard_full(area: Rect, f: &mut Frame, state: &UiState) {
     };
     let udp_block = Block::default()
         .borders(Borders::ALL)
-        .title("Packet Loss (UDP/TURN)");
+        .title("Packet Loss (UDP/STUN)");
     let udp_inner = udp_block.inner(main[2]);
     f.render_widget(udp_block, main[2]);
 
