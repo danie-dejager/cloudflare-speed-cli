@@ -37,7 +37,7 @@ run with `--help` to see full list of features
 
 ### Cargo (crates.io)
 
-My preferred way if you have cargo installed:
+My preferred way if you have cargo installed (cargo page [here](https://crates.io/crates/cloudflare-speed-cli)):
 
 ```bash
 cargo install cloudflare-speed-cli
