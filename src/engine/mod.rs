@@ -387,10 +387,13 @@ impl TestEngine {
         // Collect *all* resolved addresses so the UDP probe can filter by bind-IP family
         // (binding to a v4 source IP and connecting to a v6 target fails with EAFNOSUPPORT).
         let stun_dns_handle = tokio::spawn(async move {
-            tokio::net::lookup_host(("turn.cloudflare.com", 3478_u16))
-                .await
-                .map(|addrs| addrs.collect::<Vec<_>>())
-                .unwrap_or_default()
+            tokio::net::lookup_host((
+                crate::constants::UDP_PROBE_STUN_HOST,
+                crate::constants::STUN_PORT,
+            ))
+            .await
+            .map(|addrs| addrs.collect::<Vec<_>>())
+            .unwrap_or_default()
         });
 
         let (upload, loaded_latency_upload) = throughput::run_upload_with_loaded_latency(
@@ -409,7 +412,11 @@ impl TestEngine {
         let mut udp_error = None;
 
         let info = crate::model::TurnInfo {
-            urls: vec!["stun:turn.cloudflare.com:3478".to_string()],
+            urls: vec![format!(
+                "stun:{}:{}",
+                crate::constants::UDP_PROBE_STUN_HOST,
+                crate::constants::STUN_PORT
+            )],
             username: None,
             credential: None,
         };

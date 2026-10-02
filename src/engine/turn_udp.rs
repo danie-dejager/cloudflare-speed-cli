@@ -121,8 +121,6 @@ fn parse_host_port(url: &str) -> Result<(String, u16)> {
     // - stun:host:port
     // - stun:host
     // - turn:host:port?transport=udp
-    const DEFAULT_STUN_PORT: u16 = 3478;
-
     let (_, rest) = url.split_once(':').context("bad stun/turn url")?;
     let (hostport, _) = rest.split_once('?').unwrap_or((rest, ""));
     let (host, port_str) = hostport.split_once(':').unwrap_or((hostport, ""));
@@ -130,7 +128,7 @@ fn parse_host_port(url: &str) -> Result<(String, u16)> {
     anyhow::ensure!(!host.is_empty(), "empty host in stun/turn url");
 
     let port = if port_str.is_empty() {
-        DEFAULT_STUN_PORT
+        crate::constants::STUN_PORT
     } else {
         port_str
             .parse::<u16>()
@@ -164,6 +162,12 @@ impl ArrivalTracker {
         }
         true
     }
+}
+
+/// True once enough probes have gone unanswered, without a single response,
+/// to conclude the target is unreachable over UDP rather than merely lossy.
+fn target_unreachable(sent: u64, received: u64) -> bool {
+    received == 0 && sent >= crate::constants::UDP_PROBE_UNREACHABLE_AFTER
 }
 
 pub async fn run_udp_like_loss_probe(
@@ -213,9 +217,20 @@ pub async fn run_udp_like_loss_probe(
 
     let (sock, _addr) = bind_and_connect_udp(&candidates, cfg).await?;
 
+    run_probes(&sock, target_url, cfg.udp_packets, event_tx, cancel).await
+}
+
+/// Send up to `attempts` STUN binding requests over the already-connected
+/// `sock` and summarize loss, RTT, jitter and reordering from the responses.
+async fn run_probes(
+    sock: &UdpSocket,
+    target_url: String,
+    attempts: u64,
+    event_tx: &mpsc::Sender<TestEvent>,
+    cancel: &AtomicBool,
+) -> Result<ExperimentalUdpSummary> {
     let timeout = crate::constants::UDP_PROBE_TIMEOUT;
     let interval = crate::constants::UDP_PROBE_INTERVAL;
-    let attempts = cfg.udp_packets;
 
     let mut sent = 0u64;
     let mut received = 0u64;
@@ -227,7 +242,7 @@ pub async fn run_udp_like_loss_probe(
     let mut tracker = ArrivalTracker::default();
 
     for seq in 1..=attempts {
-        if cancel.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) || target_unreachable(sent, received) {
             break;
         }
         sent += 1;
@@ -302,6 +317,18 @@ pub async fn run_udp_like_loss_probe(
         }
 
         tokio::time::sleep(interval).await;
+    }
+
+    // Not one response means UDP to the target is being dropped (typically a
+    // firewall rule), not that the network loses every packet: the TCP
+    // throughput phases just ran fine. Report a probe failure instead of a
+    // misleading 100% loss.
+    if sent > 0 && received == 0 && !cancel.load(Ordering::Relaxed) {
+        return Err(anyhow!(
+            "no response from {} after {} UDP probes; UDP to it is likely blocked on this network",
+            target_url,
+            sent
+        ));
     }
 
     let out_of_order = tracker.out_of_order;
@@ -458,5 +485,73 @@ mod tests {
         assert!(t.record(1));
         assert!(!t.record(1));
         assert_eq!(t.out_of_order, 0);
+    }
+
+    /// Client socket connected to `peer` on loopback.
+    async fn connected_client(peer: SocketAddr) -> UdpSocket {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sock.connect(peer).await.unwrap();
+        sock
+    }
+
+    /// Minimal STUN server: answers every binding request with a success
+    /// response carrying the request's transaction id.
+    async fn spawn_stun_responder() -> SocketAddr {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = server.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1500];
+            while let Ok((n, from)) = server.recv_from(&mut buf).await {
+                if n < 20 {
+                    continue;
+                }
+                let mut resp = [0u8; 20];
+                resp[..2].copy_from_slice(&[0x01, 0x01]);
+                resp[4..20].copy_from_slice(&buf[4..20]);
+                let _ = server.send_to(&resp, from).await;
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn run_probes_measures_responding_target() {
+        let peer = spawn_stun_responder().await;
+        let sock = connected_client(peer).await;
+        let (tx, _rx) = mpsc::channel(1024);
+
+        let summary = run_probes(&sock, "stun:test".into(), 3, &tx, &AtomicBool::new(false))
+            .await
+            .unwrap();
+
+        assert_eq!(summary.latency.sent, 3);
+        assert_eq!(summary.latency.received, 3);
+        assert_eq!(summary.latency.loss, 0.0);
+    }
+
+    #[tokio::test]
+    async fn run_probes_reports_silent_target_as_unreachable_not_full_loss() {
+        // Bound but never read: every probe goes unanswered, as when a
+        // firewall drops UDP to the target.
+        let blackhole = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let sock = connected_client(blackhole.local_addr().unwrap()).await;
+        let (tx, _rx) = mpsc::channel(1024);
+
+        let err = run_probes(&sock, "stun:test".into(), 2, &tx, &AtomicBool::new(false))
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("no response from stun:test"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn target_unreachable_only_after_threshold_with_zero_responses() {
+        let n = crate::constants::UDP_PROBE_UNREACHABLE_AFTER;
+        assert!(!target_unreachable(n - 1, 0));
+        assert!(target_unreachable(n, 0));
+        assert!(!target_unreachable(n, 1));
     }
 }
